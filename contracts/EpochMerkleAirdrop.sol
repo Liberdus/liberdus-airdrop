@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /// @title EpochMerkleAirdrop
@@ -12,7 +13,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 /// Each epoch stores its own Merkle root, deadline, and claimed bitmap so claim state is isolated
 /// between distributions. The contract must be funded ahead of claims through normal ERC20
 /// transfers, and uses SafeERC20 for token movements.
-contract EpochMerkleAirdrop is Ownable {
+contract EpochMerkleAirdrop is Ownable2Step {
     using SafeERC20 for IERC20;
 
     /// @notice Thrown when a required address argument is the zero address.
@@ -23,6 +24,9 @@ contract EpochMerkleAirdrop is Ownable {
 
     /// @notice Thrown when an epoch deadline is not strictly in the future.
     error InvalidDeadline();
+
+    /// @notice Thrown when an epoch deadline exceeds the maximum supported duration.
+    error DeadlineTooFar();
 
     /// @notice Thrown when a claim references an epoch that has not been created.
     /// @param epoch The epoch id that was requested.
@@ -41,9 +45,9 @@ contract EpochMerkleAirdrop is Ownable {
     /// @param deadline The cutoff timestamp configured for the epoch.
     error ClaimWindowClosed(uint256 epoch, uint256 deadline);
 
-    /// @notice Thrown when the owner tries to withdraw the airdrop token before the latest epoch ends.
-    /// @param epoch The latest configured epoch.
-    /// @param deadline The deadline of the latest configured epoch.
+    /// @notice Thrown when the owner tries to withdraw the airdrop token before the furthest deadline ends.
+    /// @param epoch The epoch that currently owns the furthest deadline.
+    /// @param deadline The furthest deadline across all configured epochs.
     error ActiveEpoch(uint256 epoch, uint256 deadline);
 
     /// @notice Thrown when attempting to recover the primary airdrop token via the generic recovery path.
@@ -79,11 +83,20 @@ contract EpochMerkleAirdrop is Ownable {
     /// @notice Most recently created epoch id. Starts at zero before any airdrop is configured.
     uint256 public currentEpoch;
 
+    /// @notice Furthest claim deadline across every configured epoch.
+    uint256 public latestDeadline;
+
+    /// @notice Epoch id that currently owns `latestDeadline`.
+    uint256 public latestDeadlineEpoch;
+
     /// @notice Merkle root used to validate claims for each epoch.
     mapping(uint256 epoch => bytes32 merkleRoot) public merkleRoots;
 
     /// @notice Claim deadline timestamp for each epoch.
     mapping(uint256 epoch => uint256 deadline) public deadlines;
+
+    /// @notice Total amount successfully claimed from each epoch.
+    mapping(uint256 epoch => uint256 claimedAmount) public epochClaimedAmounts;
 
     /// @dev Packed claim status bitmap for each epoch, keyed by 256-bit word index.
     mapping(uint256 epoch => mapping(uint256 wordIndex => uint256 claimedWord)) private claimedBitMap;
@@ -102,11 +115,17 @@ contract EpochMerkleAirdrop is Ownable {
     function startNewAirdrop(bytes32 newRoot, uint256 deadline) external onlyOwner {
         if (newRoot == bytes32(0)) revert InvalidMerkleRoot();
         if (deadline <= block.timestamp) revert InvalidDeadline();
+        if (deadline > block.timestamp + 365 days) revert DeadlineTooFar();
 
         uint256 nextEpoch = currentEpoch + 1;
         currentEpoch = nextEpoch;
         merkleRoots[nextEpoch] = newRoot;
         deadlines[nextEpoch] = deadline;
+
+        if (deadline > latestDeadline) {
+            latestDeadline = deadline;
+            latestDeadlineEpoch = nextEpoch;
+        }
 
         emit AirdropStarted(nextEpoch, newRoot, deadline);
     }
@@ -139,8 +158,20 @@ contract EpochMerkleAirdrop is Ownable {
 
         _setClaimed(epoch, index);
         token.safeTransfer(account, amount);
+        epochClaimedAmounts[epoch] += amount;
 
         emit Claimed(epoch, index, account, amount);
+    }
+
+    /// @notice Returns the stored metadata for an epoch.
+    /// @param epoch The epoch to inspect.
+    /// @return merkleRoot The Merkle root assigned to the epoch.
+    /// @return deadline The claim deadline assigned to the epoch.
+    /// @return claimedAmount The amount successfully claimed from the epoch so far.
+    function epochInfo(
+        uint256 epoch
+    ) external view returns (bytes32 merkleRoot, uint256 deadline, uint256 claimedAmount) {
+        return (merkleRoots[epoch], deadlines[epoch], epochClaimedAmounts[epoch]);
     }
 
     /// @notice Returns whether a claim index has already been used for an epoch.
@@ -162,9 +193,9 @@ contract EpochMerkleAirdrop is Ownable {
     function withdraw(address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
 
-        uint256 epoch = currentEpoch;
-        uint256 latestDeadline = deadlines[epoch];
-        if (epoch != 0 && block.timestamp <= latestDeadline) revert ActiveEpoch(epoch, latestDeadline);
+        if (latestDeadlineEpoch != 0 && block.timestamp <= latestDeadline) {
+            revert ActiveEpoch(latestDeadlineEpoch, latestDeadline);
+        }
 
         token.safeTransfer(to, amount);
 

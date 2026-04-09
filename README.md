@@ -9,10 +9,15 @@ This repo currently contains the Solidity contract and local Hardhat tests for t
 `EpochMerkleAirdrop` is designed around discrete airdrop epochs:
 
 - each new epoch stores one Merkle root and one claim deadline
+- multiple epochs may overlap and remain claimable at the same time
+- each epoch also stores running totals of successfully claimed tokens
 - claims are tracked independently per epoch with a bitmap
 - claims are allowed only before the epoch deadline
-- the owner can withdraw the airdrop token only after the latest epoch deadline has passed
+- epoch deadlines are capped at 365 days from creation
+- the owner can withdraw the airdrop token only after the furthest deadline across all epochs has passed
 - the contract is funded by transferring the ERC20 token into it directly
+- funding is pooled across epochs; the contract does not reserve balances per epoch or enforce solvency
+- ownership transfers use OpenZeppelin `Ownable2Step`
 - non-airdrop ERC20 tokens can be recovered by the owner through a separate recovery function
 
 ## Local Usage
@@ -22,6 +27,17 @@ npm install
 npm run compile
 npm test
 ```
+
+## Key Reads
+
+Useful read functions exposed by the contract:
+
+- `merkleRoots(epoch)`
+- `deadlines(epoch)`
+- `epochClaimedAmounts(epoch)`
+- `epochInfo(epoch)`
+- `latestDeadline()`
+- `latestDeadlineEpoch()`
 
 ## Merkle Tree Format
 

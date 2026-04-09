@@ -5,6 +5,33 @@ const { buildTree, deployFixture, fundAirdrop, sumAmounts } = require("./helpers
 
 describe("EpochMerkleAirdrop", function () {
   describe("claims", function () {
+    const invalidProofCases = [
+      {
+        name: "when the amount is increased",
+        buildArgs: ({ bob }, claims, tree) => [1n, bob.address, claims[1].amount + 1n, tree.proofFor(1n)],
+      },
+      {
+        name: "when the amount is zeroed out",
+        buildArgs: ({ bob }, claims, tree) => [1n, bob.address, 0n, tree.proofFor(1n)],
+      },
+      {
+        name: "when the account is changed",
+        buildArgs: ({ alice }, claims, tree) => [1n, alice.address, claims[1].amount, tree.proofFor(1n)],
+      },
+      {
+        name: "when the index is changed",
+        buildArgs: ({ bob }, claims, tree) => [2n, bob.address, claims[1].amount, tree.proofFor(1n)],
+      },
+      {
+        name: "when a different leaf proof is reused",
+        buildArgs: ({ bob }, claims, tree) => [1n, bob.address, claims[1].amount, tree.proofFor(0n)],
+      },
+      {
+        name: "when the proof is empty",
+        buildArgs: ({ bob }, claims) => [1n, bob.address, claims[1].amount, []],
+      },
+    ];
+
     it("allows valid claims across multiple epochs and tracks claims separately", async function () {
       const { owner, alice, bob, carol, token, airdrop } = await loadFixture(deployFixture);
       const now = await time.latest();
@@ -48,6 +75,8 @@ describe("EpochMerkleAirdrop", function () {
       expect(await airdrop.isClaimed(1, 256)).to.equal(true);
       expect(await airdrop.isClaimed(2, 0)).to.equal(true);
       expect(await airdrop.isClaimed(2, 1)).to.equal(false);
+      expect(await airdrop.epochClaimedAmounts(1)).to.equal(epochOneClaims[0].amount + epochOneClaims[1].amount);
+      expect(await airdrop.epochClaimedAmounts(2)).to.equal(epochTwoClaims[0].amount);
       expect(await token.balanceOf(alice.address)).to.equal(epochOneClaims[0].amount + epochTwoClaims[0].amount);
       expect(await token.balanceOf(bob.address)).to.equal(epochOneClaims[1].amount);
     });
@@ -69,6 +98,27 @@ describe("EpochMerkleAirdrop", function () {
         .withArgs(1, claims[0].index, alice.address, claims[0].amount);
 
       expect(await token.balanceOf(alice.address)).to.equal(claims[0].amount);
+      expect(await airdrop.epochClaimedAmounts(1)).to.equal(claims[0].amount);
+    });
+
+    it("allows the same root and proof to be reused in a later epoch", async function () {
+      const { owner, alice, token, airdrop } = await loadFixture(deployFixture);
+      const claims = [{ index: 0n, account: alice.address, amount: ethers.parseEther("15") }];
+      const tree = buildTree(claims);
+      const totalFunding = claims[0].amount * 2n;
+
+      await airdrop.startNewAirdrop(tree.root, (await time.latest()) + 3600);
+      await airdrop.startNewAirdrop(tree.root, (await time.latest()) + 7200);
+      await fundAirdrop(token, owner, airdrop, totalFunding);
+
+      await airdrop.claim(1, claims[0].index, alice.address, claims[0].amount, tree.proofFor(claims[0].index));
+      await airdrop.claim(2, claims[0].index, alice.address, claims[0].amount, tree.proofFor(claims[0].index));
+
+      expect(await airdrop.isClaimed(1, claims[0].index)).to.equal(true);
+      expect(await airdrop.isClaimed(2, claims[0].index)).to.equal(true);
+      expect(await airdrop.epochClaimedAmounts(1)).to.equal(claims[0].amount);
+      expect(await airdrop.epochClaimedAmounts(2)).to.equal(claims[0].amount);
+      expect(await token.balanceOf(alice.address)).to.equal(totalFunding);
     });
 
     it("rejects claims for unknown epochs", async function () {
@@ -96,28 +146,24 @@ describe("EpochMerkleAirdrop", function () {
         .withArgs(1, claims[0].index);
     });
 
-    it("rejects mismatched proofs when the amount, account, or index is altered", async function () {
-      const { owner, alice, bob, token, airdrop } = await loadFixture(deployFixture);
-      const claims = [
-        { index: 0n, account: alice.address, amount: ethers.parseEther("100") },
-        { index: 1n, account: bob.address, amount: ethers.parseEther("200") },
-      ];
-      const tree = buildTree(claims);
+    invalidProofCases.forEach(({ name, buildArgs }) => {
+      it(`rejects invalid proofs ${name}`, async function () {
+        const { owner, alice, bob, token, airdrop } = await loadFixture(deployFixture);
+        const claims = [
+          { index: 0n, account: alice.address, amount: ethers.parseEther("100") },
+          { index: 1n, account: bob.address, amount: ethers.parseEther("200") },
+        ];
+        const tree = buildTree(claims);
+        const [index, account, amount, proof] = buildArgs({ alice, bob }, claims, tree);
 
-      await airdrop.startNewAirdrop(tree.root, (await time.latest()) + 3600);
-      await fundAirdrop(token, owner, airdrop, sumAmounts(claims));
+        await airdrop.startNewAirdrop(tree.root, (await time.latest()) + 3600);
+        await fundAirdrop(token, owner, airdrop, sumAmounts(claims));
 
-      await expect(
-        airdrop.claim(1, 1n, bob.address, claims[1].amount + 1n, tree.proofFor(1n))
-      ).to.be.revertedWithCustomError(airdrop, "InvalidProof");
-
-      await expect(
-        airdrop.claim(1, 1n, alice.address, claims[1].amount, tree.proofFor(1n))
-      ).to.be.revertedWithCustomError(airdrop, "InvalidProof");
-
-      await expect(
-        airdrop.claim(1, 2n, bob.address, claims[1].amount, tree.proofFor(1n))
-      ).to.be.revertedWithCustomError(airdrop, "InvalidProof");
+        await expect(airdrop.claim(1, index, account, amount, proof)).to.be.revertedWithCustomError(
+          airdrop,
+          "InvalidProof"
+        );
+      });
     });
 
     it("rejects proofs from a different epoch", async function () {
@@ -173,12 +219,63 @@ describe("EpochMerkleAirdrop", function () {
       ).to.be.reverted;
 
       expect(await airdrop.isClaimed(1, claims[0].index)).to.equal(false);
+      expect(await airdrop.epochClaimedAmounts(1)).to.equal(0);
 
       await fundAirdrop(token, owner, airdrop, sumAmounts(claims));
       await airdrop.claim(1, claims[0].index, alice.address, claims[0].amount, tree.proofFor(0n));
 
       expect(await airdrop.isClaimed(1, claims[0].index)).to.equal(true);
       expect(await token.balanceOf(alice.address)).to.equal(claims[0].amount);
+    });
+
+    it("tracks bitmap claims correctly across table-driven boundary indexes", async function () {
+      const { owner, alice, token, airdrop } = await loadFixture(deployFixture);
+      const bitmapCases = [
+        { index: 0n, amount: 1n, unclaimedNeighbors: [1n, 255n] },
+        { index: 255n, amount: 2n, unclaimedNeighbors: [254n, 256n] },
+        { index: 256n, amount: 3n, unclaimedNeighbors: [257n] },
+        { index: 511n, amount: 4n, unclaimedNeighbors: [510n, 512n] },
+        { index: 512n, amount: 5n, unclaimedNeighbors: [513n] },
+      ];
+      const claims = bitmapCases.map(({ index, amount }) => ({ index, account: alice.address, amount }));
+      const tree = buildTree(claims);
+      let claimedTotal = 0n;
+
+      await airdrop.startNewAirdrop(tree.root, (await time.latest()) + 3600);
+      await fundAirdrop(token, owner, airdrop, sumAmounts(claims));
+
+      for (const claimCase of bitmapCases) {
+        await airdrop.claim(1, claimCase.index, alice.address, claimCase.amount, tree.proofFor(claimCase.index));
+
+        claimedTotal += claimCase.amount;
+
+        expect(await airdrop.isClaimed(1, claimCase.index)).to.equal(true);
+        expect(await airdrop.epochClaimedAmounts(1)).to.equal(claimedTotal);
+
+        for (const neighbor of claimCase.unclaimedNeighbors) {
+          expect(await airdrop.isClaimed(1, neighbor)).to.equal(false);
+        }
+      }
+
+      expect(await token.balanceOf(alice.address)).to.equal(claimedTotal);
+    });
+
+    it("allows zero-amount claims and records the index without inflating claimed totals", async function () {
+      const { alice, airdrop, token } = await loadFixture(deployFixture);
+      const claims = [{ index: 3n, account: alice.address, amount: 0n }];
+      const tree = buildTree(claims);
+
+      await airdrop.startNewAirdrop(tree.root, (await time.latest()) + 3600);
+
+      await expect(
+        airdrop.claim(1, claims[0].index, alice.address, claims[0].amount, tree.proofFor(claims[0].index))
+      )
+        .to.emit(airdrop, "Claimed")
+        .withArgs(1, claims[0].index, alice.address, 0n);
+
+      expect(await airdrop.isClaimed(1, claims[0].index)).to.equal(true);
+      expect(await airdrop.epochClaimedAmounts(1)).to.equal(0);
+      expect(await token.balanceOf(alice.address)).to.equal(0);
     });
   });
 });
