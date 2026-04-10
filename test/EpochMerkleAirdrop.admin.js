@@ -5,104 +5,21 @@ const { buildTree, deployFixture, fundAirdrop } = require("./helpers/airdropFixt
 
 describe("EpochMerkleAirdrop", function () {
   describe("admin controls", function () {
-    const withdrawLockCases = [
-      {
-        name: "when the first epoch has the furthest deadline",
-        offsets: [500, 100],
-        blockedAtOffset: 101,
-        expectedEpoch: 1,
-        expectedDeadlineOffset: 500,
-      },
-      {
-        name: "when the second epoch has the furthest deadline",
-        offsets: [100, 500],
-        blockedAtOffset: 101,
-        expectedEpoch: 2,
-        expectedDeadlineOffset: 500,
-      },
-      {
-        name: "when both epochs share the same deadline",
-        offsets: [300, 300],
-        blockedAtOffset: 150,
-        expectedEpoch: 1,
-        expectedDeadlineOffset: 300,
-      },
-    ];
-
-    it("only allows withdrawing the airdrop token after the furthest epoch deadline", async function () {
+    it("allows the owner to withdraw even while epochs are still active", async function () {
       const { owner, treasury, token, airdrop } = await loadFixture(deployFixture);
       const now = await time.latest();
-      const firstTree = buildTree([{ index: 0n, account: owner.address, amount: ethers.parseEther("10") }]);
-      const secondTree = buildTree([{ index: 0n, account: owner.address, amount: ethers.parseEther("2") }]);
-      const deadlineOne = now + 500;
-      const deadlineTwo = now + 100;
-      const depositAmount = ethers.parseEther("500");
-
-      await airdrop.startNewAirdrop(firstTree.root, deadlineOne);
-      await airdrop.startNewAirdrop(secondTree.root, deadlineTwo);
-      await fundAirdrop(token, owner, airdrop, depositAmount);
-
-      await time.increaseTo(deadlineTwo + 1);
-
-      await expect(airdrop.withdraw(treasury.address, ethers.parseEther("10")))
-        .to.be.revertedWithCustomError(airdrop, "ActiveEpoch")
-        .withArgs(1, deadlineOne);
-
-      await time.increaseTo(deadlineOne + 1);
-
-      await expect(airdrop.withdraw(treasury.address, ethers.parseEther("10")))
-        .to.emit(airdrop, "Withdrawn")
-        .withArgs(treasury.address, ethers.parseEther("10"));
-
-      expect(await token.balanceOf(treasury.address)).to.equal(ethers.parseEther("10"));
-    });
-
-    withdrawLockCases.forEach(({ name, offsets, blockedAtOffset, expectedEpoch, expectedDeadlineOffset }) => {
-      it(`applies the withdraw lock table ${name}`, async function () {
-        const { owner, treasury, token, airdrop } = await loadFixture(deployFixture);
-        const now = await time.latest();
-        const firstDeadline = now + offsets[0];
-        const secondDeadline = now + offsets[1];
-        const firstTree = buildTree([{ index: 0n, account: owner.address, amount: 1n }]);
-        const secondTree = buildTree([{ index: 0n, account: owner.address, amount: 2n }]);
-
-        await airdrop.startNewAirdrop(firstTree.root, firstDeadline);
-        await airdrop.startNewAirdrop(secondTree.root, secondDeadline);
-        await fundAirdrop(token, owner, airdrop, 10n);
-
-        expect(await airdrop.latestDeadline()).to.equal(now + expectedDeadlineOffset);
-        expect(await airdrop.latestDeadlineEpoch()).to.equal(expectedEpoch);
-
-        await time.increaseTo(now + blockedAtOffset);
-
-        await expect(airdrop.withdraw(treasury.address, 1n))
-          .to.be.revertedWithCustomError(airdrop, "ActiveEpoch")
-          .withArgs(expectedEpoch, now + expectedDeadlineOffset);
-      });
-    });
-
-    it("keeps withdraw locked at the exact latest deadline and unlocks one second later", async function () {
-      const { owner, treasury, token, airdrop } = await loadFixture(deployFixture);
-      const deadline = (await time.latest()) + 300;
-      const tree = buildTree([{ index: 0n, account: owner.address, amount: ethers.parseEther("1") }]);
-      const amount = ethers.parseEther("5");
+      const tree = buildTree([{ index: 0n, account: owner.address, amount: ethers.parseEther("10") }]);
+      const deadline = now + 500;
+      const withdrawAmount = ethers.parseEther("10");
 
       await airdrop.startNewAirdrop(tree.root, deadline);
-      await fundAirdrop(token, owner, airdrop, amount);
+      await fundAirdrop(token, owner, airdrop, ethers.parseEther("500"));
 
-      await time.setNextBlockTimestamp(deadline);
-
-      await expect(airdrop.withdraw(treasury.address, 1n))
-        .to.be.revertedWithCustomError(airdrop, "ActiveEpoch")
-        .withArgs(1, deadline);
-
-      await time.increaseTo(deadline + 1);
-
-      await expect(airdrop.withdraw(treasury.address, amount))
+      await expect(airdrop.withdraw(treasury.address, withdrawAmount))
         .to.emit(airdrop, "Withdrawn")
-        .withArgs(treasury.address, amount);
+        .withArgs(treasury.address, withdrawAmount);
 
-      expect(await token.balanceOf(treasury.address)).to.equal(amount);
+      expect(await token.balanceOf(treasury.address)).to.equal(withdrawAmount);
     });
 
     it("allows the owner to withdraw when no epoch has been started", async function () {
@@ -116,6 +33,22 @@ describe("EpochMerkleAirdrop", function () {
         .withArgs(treasury.address, amount);
 
       expect(await token.balanceOf(treasury.address)).to.equal(amount);
+    });
+
+    it("lets the owner disable an active epoch", async function () {
+      const { owner, airdrop } = await loadFixture(deployFixture);
+      const now = await time.latest();
+      const firstTree = buildTree([{ index: 0n, account: owner.address, amount: 1n }]);
+      const secondTree = buildTree([{ index: 1n, account: owner.address, amount: 2n }]);
+      const secondDeadline = now + 900;
+
+      await airdrop.startNewAirdrop(firstTree.root, now + 300);
+      await airdrop.startNewAirdrop(secondTree.root, secondDeadline);
+
+      await expect(airdrop.setEpochDeadline(2, 0))
+        .to.emit(airdrop, "DeadlineUpdated")
+        .withArgs(2, secondDeadline, 0);
+      expect(await airdrop.deadlines(2)).to.equal(0);
     });
 
     it("rejects non-owner withdrawals and zero-address withdrawals", async function () {

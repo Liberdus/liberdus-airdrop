@@ -25,6 +25,8 @@ import {
   syncWalletState,
   bindWalletEvents,
 } from "../shared/wallet.js";
+import { loadClaimCatalog, fetchClaimSource } from "../shared/claims.js";
+import { buildClaimRound } from "../shared/merkle.js";
 
 const runtime = {
   provider: null,
@@ -34,6 +36,9 @@ const runtime = {
   owner: null,
   currentEpoch: 0,
   epochRows: [],
+  claimCatalog: null,
+  claimSourcesByEpoch: new Map(),
+  uploadedRound: null,
   config: { ...HARDHAT_LOCAL, tokenAddress: "", dustTokenAddress: "", airdropAddress: "", claimsManifestPath: "./claims/index.json" },
   configSource: "template",
   tokenDecimals: 18,
@@ -55,17 +60,26 @@ const els = {
   adminGateMessage: document.getElementById("adminGateMessage"),
   adminShell: document.getElementById("adminShell"),
   currentEpoch: document.getElementById("currentEpoch"),
-  latestDeadlineLocalValue: document.getElementById("latestDeadlineLocalValue"),
-  latestDeadlineUtcValue: document.getElementById("latestDeadlineUtcValue"),
-  latestDeadlineEpochValue: document.getElementById("latestDeadlineEpochValue"),
   tokenSummary: document.getElementById("tokenSummary"),
   walletTokenBalance: document.getElementById("walletTokenBalance"),
   airdropTokenBalance: document.getElementById("airdropTokenBalance"),
+  uploadClaimsFileInput: document.getElementById("uploadClaimsFileInput"),
   startAirdropForm: document.getElementById("startAirdropForm"),
   startRootInput: document.getElementById("startRootInput"),
   startDeadlineInput: document.getElementById("startDeadlineInput"),
   startDeadlineUtcInput: document.getElementById("startDeadlineUtcInput"),
   startDeadlineUnix: document.getElementById("startDeadlineUnix"),
+  uploadedClaimCount: document.getElementById("uploadedClaimCount"),
+  uploadedClaimTotal: document.getElementById("uploadedClaimTotal"),
+  uploadPreviewBody: document.getElementById("uploadPreviewBody"),
+  fundUploadedButton: document.getElementById("fundUploadedButton"),
+  clearUploadedButton: document.getElementById("clearUploadedButton"),
+  updateDeadlineForm: document.getElementById("updateDeadlineForm"),
+  updateEpochInput: document.getElementById("updateEpochInput"),
+  updateDeadlineInput: document.getElementById("updateDeadlineInput"),
+  updateDeadlineUtcInput: document.getElementById("updateDeadlineUtcInput"),
+  updateDeadlineUnix: document.getElementById("updateDeadlineUnix"),
+  disableEpochButton: document.getElementById("disableEpochButton"),
   fundAirdropForm: document.getElementById("fundAirdropForm"),
   fundAirdropAmount: document.getElementById("fundAirdropAmount"),
   withdrawForm: document.getElementById("withdrawForm"),
@@ -143,6 +157,18 @@ function formatHexShort(value) {
   return `${value.slice(0, 10)}...${value.slice(-8)}`;
 }
 
+function formatAdminDeadlineLocal(value) {
+  return Number(value) === 0 ? "Disabled" : formatDeadlineLocal(value);
+}
+
+function formatAdminDeadlineUtc(value) {
+  return Number(value) === 0 ? "Disabled" : formatDeadlineUtc(value);
+}
+
+function formatInputAmount(rawValue) {
+  return ethers.formatUnits(rawValue, runtime.tokenDecimals).replace(/\.?0+$/, "");
+}
+
 function isReadyChain() {
   return runtime.chainId === runtime.config.chainId;
 }
@@ -207,22 +233,136 @@ function readRequiredAddress(input) {
   return address;
 }
 
-function applyDeadlineUnix(unixValue) {
+function readRequiredEpoch(input, label = "Epoch") {
+  const epoch = parseRequiredBigInt(input.value, label);
+  if (epoch <= 0n) throw new Error(`${label} must be greater than zero.`);
+  return epoch;
+}
+
+function applyDeadlineFields(localInput, utcInput, unixInput, unixValue) {
   const raw = String(unixValue || "").trim();
-  els.startDeadlineUnix.value = raw;
-  els.startDeadlineInput.value = raw ? formatDateTimeLocalValue(raw) : "";
-  els.startDeadlineUtcInput.value = raw ? formatUtcInputValue(raw) : "";
+  unixInput.value = raw;
+  localInput.value = raw ? formatDateTimeLocalValue(raw) : "";
+  utcInput.value = raw ? formatUtcInputValue(raw) : "";
 }
 
-function syncDeadlineFromLocal() {
-  const unix = getUnixFromDateTimeLocal(els.startDeadlineInput.value);
-  applyDeadlineUnix(unix);
+function syncDeadlineFromLocal(localInput, utcInput, unixInput) {
+  const unix = getUnixFromDateTimeLocal(localInput.value);
+  applyDeadlineFields(localInput, utcInput, unixInput, unix);
 }
 
-function syncDeadlineFromUtc() {
-  const unix = getUnixFromUtcInput(els.startDeadlineUtcInput.value);
+function syncDeadlineFromUtc(localInput, utcInput, unixInput) {
+  const unix = getUnixFromUtcInput(utcInput.value);
   if (!unix) return;
-  applyDeadlineUnix(unix);
+  applyDeadlineFields(localInput, utcInput, unixInput, unix);
+}
+
+function bindNativePicker(input) {
+  if (!input) return;
+
+  input.addEventListener("click", () => {
+    if (typeof input.showPicker === "function") {
+      try {
+        input.showPicker();
+      } catch {
+        // Some browsers reject repeated picker opens; fall back to native behavior.
+      }
+    }
+  });
+}
+
+function validateDeadlineValue(deadlineUnix, { allowZero = false } = {}) {
+  if (!Number.isFinite(deadlineUnix) || deadlineUnix < 0) {
+    throw new Error("A valid deadline is required.");
+  }
+
+  return allowZero && deadlineUnix === 0;
+}
+
+async function validateFutureDeadlineAgainstChain(deadlineUnix, { allowZero = false } = {}) {
+  const isExplicitZero = validateDeadlineValue(deadlineUnix, { allowZero });
+  if (isExplicitZero) return;
+
+  let now = Math.floor(Date.now() / 1000);
+  if (runtime.provider) {
+    const latestBlock = await runtime.provider.getBlock("latest");
+    now = Number(latestBlock?.timestamp ?? now);
+  }
+
+  if (deadlineUnix <= now) {
+    throw new Error("Deadline must be in the future.");
+  }
+}
+
+function clearUploadedRoundState() {
+  runtime.uploadedRound = null;
+  els.startRootInput.value = "";
+  els.uploadClaimsFileInput.value = "";
+  renderUploadedRound();
+}
+
+function renderUploadedRound() {
+  const round = runtime.uploadedRound;
+
+  if (!round) {
+    els.uploadedClaimCount.textContent = "-";
+    els.uploadedClaimTotal.textContent = "-";
+    els.uploadPreviewBody.innerHTML = '<tr><td colspan="3" class="empty-row">Upload a claims JSON file to preview it.</td></tr>';
+    els.fundUploadedButton.disabled = true;
+    els.clearUploadedButton.disabled = true;
+    return;
+  }
+
+  const walletLabel = round.claimCount === 1 ? "1 wallet" : `${round.claimCount} wallets`;
+  els.uploadedClaimCount.textContent = walletLabel;
+  els.uploadedClaimTotal.textContent = formatTokenAmount(BigInt(round.totalAmountRaw), runtime.tokenDecimals, runtime.tokenSymbol);
+  els.uploadPreviewBody.innerHTML = round.claims
+    .map((claim) => `
+      <tr>
+        <td>${claim.index}</td>
+        <td><code title="${claim.account}">${formatAddressShort(claim.account)}</code></td>
+        <td>${formatTokenAmount(BigInt(claim.amountRaw), runtime.tokenDecimals, runtime.tokenSymbol)}</td>
+      </tr>
+    `)
+    .join("");
+  els.fundUploadedButton.disabled = false;
+  els.clearUploadedButton.disabled = false;
+}
+
+async function loadUploadedClaimsFile(file) {
+  const rawText = await file.text();
+  runtime.uploadedRound = buildClaimRound(rawText, runtime.tokenDecimals);
+  els.startRootInput.value = runtime.uploadedRound.root;
+  els.fundAirdropAmount.value = formatInputAmount(BigInt(runtime.uploadedRound.totalAmountRaw));
+  renderUploadedRound();
+}
+
+async function refreshCatalogRounds() {
+  runtime.claimSourcesByEpoch = new Map();
+
+  if (!runtime.config.claimsManifestPath) return;
+
+  runtime.claimCatalog = await loadClaimCatalog(runtime.config.claimsManifestPath);
+  if (!runtime.claimCatalog?.sources?.length) return;
+
+  const roundEntries = await Promise.all(runtime.claimCatalog.sources.map(async (source) => {
+    try {
+      const round = await fetchClaimSource(source, runtime.claimCatalog.baseUrl, runtime.tokenDecimals);
+      return { epoch: source.epoch, source, round, errorMessage: "" };
+    } catch (error) {
+      return { epoch: source.epoch, source, round: null, errorMessage: formatUiError(error, "Load round data", runtime) };
+    }
+  }));
+
+  for (const entry of roundEntries) {
+    runtime.claimSourcesByEpoch.set(entry.epoch, entry);
+  }
+}
+
+function formatClaimedDisplay(claimedAmount, totalAmountRaw) {
+  const claimedText = formatTokenAmount(claimedAmount, runtime.tokenDecimals, runtime.tokenSymbol);
+  if (totalAmountRaw == null) return claimedText;
+  return `${claimedText} / ${formatTokenAmount(totalAmountRaw, runtime.tokenDecimals, runtime.tokenSymbol)}`;
 }
 
 function renderEpochList() {
@@ -236,9 +376,9 @@ function renderEpochList() {
       <tr>
         <td>${row.epoch}</td>
         <td><code title="${row.root}">${formatHexShort(row.root)}</code></td>
-        <td>${formatDeadlineLocal(row.deadline)}</td>
-        <td>${formatDeadlineUtc(row.deadline)}</td>
-        <td>${formatTokenAmount(row.claimedAmount, runtime.tokenDecimals, runtime.tokenSymbol)}</td>
+        <td>${formatAdminDeadlineLocal(row.deadline)}</td>
+        <td>${formatAdminDeadlineUtc(row.deadline)}</td>
+        <td>${formatClaimedDisplay(row.claimedAmount, row.totalAmountRaw)}</td>
       </tr>
     `)
     .join("");
@@ -262,11 +402,18 @@ async function refreshEpochRows() {
   runtime.epochRows = await Promise.all(
     epochIds.map(async (epoch) => {
       const [root, deadline, claimedAmount] = await airdrop.epochInfo(BigInt(epoch));
+      const localSource = runtime.claimSourcesByEpoch.get(epoch);
+      const localRound = localSource?.round;
+      const totalAmountRaw = localRound && localRound.root.toLowerCase() === root.toLowerCase()
+        ? BigInt(localRound.totalAmountRaw)
+        : null;
+
       return {
         epoch,
         root,
         deadline,
         claimedAmount,
+        totalAmountRaw,
       };
     }),
   );
@@ -326,9 +473,6 @@ async function refreshPage() {
   runtime.currentEpoch = 0;
   runtime.epochRows = [];
   els.currentEpoch.textContent = "-";
-  els.latestDeadlineLocalValue.textContent = "Not scheduled";
-  els.latestDeadlineUtcValue.textContent = "Not scheduled";
-  els.latestDeadlineEpochValue.textContent = "-";
   els.tokenSummary.textContent = "-";
   els.walletTokenBalance.textContent = "-";
   els.airdropTokenBalance.textContent = "-";
@@ -346,9 +490,6 @@ async function refreshPage() {
     runtime.tokenDecimals = snapshot.tokenDecimals ?? runtime.tokenDecimals;
 
     els.currentEpoch.textContent = snapshot.currentEpoch?.toString() || "-";
-    els.latestDeadlineLocalValue.textContent = formatDeadlineLocal(snapshot.latestDeadline || 0);
-    els.latestDeadlineUtcValue.textContent = formatDeadlineUtc(snapshot.latestDeadline || 0);
-    els.latestDeadlineEpochValue.textContent = snapshot.latestDeadlineEpoch?.toString() || "-";
     els.tokenSummary.textContent = snapshot.tokenSymbol
       ? `${snapshot.tokenSymbol} (${runtime.tokenDecimals} decimals)`
       : "-";
@@ -363,12 +504,66 @@ async function refreshPage() {
     runtime.currentEpoch = 0;
   }
 
+  await refreshCatalogRounds().catch(() => {
+    runtime.claimSourcesByEpoch = new Map();
+  });
+
   await refreshEpochRows().catch(() => {
     runtime.epochRows = [];
     renderEpochList();
   });
 
+  renderUploadedRound();
   applyOwnerGate();
+}
+
+async function fundUploadedRound() {
+  if (!runtime.uploadedRound) {
+    throw new Error("Upload a claims JSON file first.");
+  }
+
+  const { token, airdropAddress } = getContracts({
+    config: runtime.config,
+    provider: runtime.provider,
+    signer: runtime.signer,
+    withSigner: true,
+  });
+
+  if (!token || !airdropAddress) {
+    throw new Error("Token and airdrop addresses must be configured.");
+  }
+
+  const amountRaw = BigInt(runtime.uploadedRound.totalAmountRaw);
+  await sendTransaction("Fund airdrop", () => token.transfer(airdropAddress, amountRaw), {
+    log: logger.log,
+    afterSuccess: async () => {
+      await refreshPage();
+    },
+    formatError: (error, label) => formatUiError(error, label, runtime),
+  });
+}
+
+async function updateEpochDeadline(newDeadline) {
+  const { airdrop } = getContracts({
+    config: runtime.config,
+    provider: runtime.provider,
+    signer: runtime.signer,
+    withSigner: true,
+  });
+  if (!airdrop) throw new Error("Airdrop address is not configured.");
+
+  const epoch = readRequiredEpoch(els.updateEpochInput, "Epoch");
+  await sendTransaction(
+    newDeadline === 0 ? "Disable epoch" : "Update deadline",
+    () => airdrop.setEpochDeadline(epoch, newDeadline),
+    {
+      log: logger.log,
+      afterSuccess: async () => {
+        await refreshPage();
+      },
+      formatError: (error, label) => formatUiError(error, label, runtime),
+    },
+  );
 }
 
 function bindEvents() {
@@ -414,8 +609,54 @@ function bindEvents() {
     }
   });
 
-  els.startDeadlineInput.addEventListener("input", syncDeadlineFromLocal);
-  els.startDeadlineUtcInput.addEventListener("input", syncDeadlineFromUtc);
+  els.uploadClaimsFileInput.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      clearUploadedRoundState();
+      return;
+    }
+
+    try {
+      await loadUploadedClaimsFile(file);
+      logger.log("Claims file loaded.", "success");
+    } catch (error) {
+      clearUploadedRoundState();
+      reportError(error, "Load claims file");
+    }
+  });
+
+  els.clearUploadedButton.addEventListener("click", () => {
+    clearUploadedRoundState();
+    logger.log("Claims file cleared.");
+  });
+
+  els.fundUploadedButton.addEventListener("click", async () => {
+    try {
+      await fundUploadedRound();
+    } catch (error) {
+      reportError(error, "Fund airdrop");
+    }
+  });
+
+  els.startDeadlineInput.addEventListener("input", () => {
+    syncDeadlineFromLocal(els.startDeadlineInput, els.startDeadlineUtcInput, els.startDeadlineUnix);
+  });
+  els.startDeadlineUtcInput.addEventListener("input", () => {
+    syncDeadlineFromUtc(els.startDeadlineInput, els.startDeadlineUtcInput, els.startDeadlineUnix);
+  });
+
+  els.updateDeadlineInput.addEventListener("input", () => {
+    syncDeadlineFromLocal(els.updateDeadlineInput, els.updateDeadlineUtcInput, els.updateDeadlineUnix);
+  });
+  els.updateDeadlineUtcInput.addEventListener("input", () => {
+    syncDeadlineFromUtc(els.updateDeadlineInput, els.updateDeadlineUtcInput, els.updateDeadlineUnix);
+  });
+
+  bindNativePicker(els.startDeadlineInput);
+  bindNativePicker(els.startDeadlineUtcInput);
+  bindNativePicker(els.updateDeadlineInput);
+  bindNativePicker(els.updateDeadlineUtcInput);
 
   els.fundAirdropForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -444,6 +685,8 @@ function bindEvents() {
   els.startAirdropForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
+      if (!runtime.uploadedRound) throw new Error("Upload a claims JSON file first.");
+
       const { airdrop } = getContracts({
         config: runtime.config,
         provider: runtime.provider,
@@ -454,8 +697,9 @@ function bindEvents() {
       if (!airdrop) throw new Error("Airdrop address is not configured.");
       const root = els.startRootInput.value.trim();
       if (!ethers.isHexString(root, 32)) throw new Error("Merkle root must be a bytes32 hex string.");
+
       const deadlineUnix = Number(els.startDeadlineUnix.value);
-      if (!Number.isFinite(deadlineUnix) || deadlineUnix <= 0) throw new Error("A valid deadline is required.");
+      await validateFutureDeadlineAgainstChain(deadlineUnix);
 
       await sendTransaction("Start airdrop", () => airdrop.startNewAirdrop(root, deadlineUnix), {
         log: logger.log,
@@ -466,6 +710,25 @@ function bindEvents() {
       });
     } catch (error) {
       reportError(error, "Start airdrop");
+    }
+  });
+
+  els.updateDeadlineForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const deadlineUnix = Number(els.updateDeadlineUnix.value);
+      await validateFutureDeadlineAgainstChain(deadlineUnix);
+      await updateEpochDeadline(deadlineUnix);
+    } catch (error) {
+      reportError(error, "Update deadline");
+    }
+  });
+
+  els.disableEpochButton.addEventListener("click", async () => {
+    try {
+      await updateEpochDeadline(0);
+    } catch (error) {
+      reportError(error, "Disable epoch");
     }
   });
 
@@ -526,17 +789,24 @@ function bindEvents() {
       const { airdrop } = getContracts({ config: runtime.config, provider: runtime.provider });
       if (!airdrop) throw new Error("Airdrop address is not configured.");
 
-      const epoch = parseRequiredBigInt(els.queryEpochInput.value, "Epoch query");
+      const epoch = readRequiredEpoch(els.queryEpochInput, "Epoch query");
       const [root, deadline, claimedAmount] = await airdrop.epochInfo(epoch);
+      const localRound = runtime.claimSourcesByEpoch.get(Number(epoch))?.round;
+      const totalAmountRaw = localRound && localRound.root.toLowerCase() === root.toLowerCase()
+        ? localRound.totalAmountRaw
+        : null;
+
       els.epochQueryResult.textContent = JSON.stringify(
         {
           epoch: epoch.toString(),
           merkleRoot: root,
           deadline: deadline.toString(),
-          deadlineLocal: formatDeadlineLocal(deadline),
-          deadlineUtc: formatDeadlineUtc(deadline),
+          deadlineLocal: formatAdminDeadlineLocal(deadline),
+          deadlineUtc: formatAdminDeadlineUtc(deadline),
           claimedAmount: claimedAmount.toString(),
           claimedFormatted: ethers.formatUnits(claimedAmount, runtime.tokenDecimals),
+          totalAmount: totalAmountRaw,
+          totalFormatted: totalAmountRaw ? ethers.formatUnits(totalAmountRaw, runtime.tokenDecimals) : null,
         },
         null,
         2,
@@ -552,8 +822,10 @@ function bindEvents() {
       const { airdrop } = getContracts({ config: runtime.config, provider: runtime.provider });
       if (!airdrop) throw new Error("Airdrop address is not configured.");
 
-      const epoch = parseRequiredBigInt(els.claimedEpochInput.value, "Claim status epoch");
+      const epoch = readRequiredEpoch(els.claimedEpochInput, "Claim status epoch");
       const index = parseRequiredBigInt(els.claimedIndexInput.value, "Claim status index");
+      if (index < 0n) throw new Error("Claim status index must be zero or greater.");
+
       const claimed = await airdrop.isClaimed(epoch, index);
       els.claimStatusResult.textContent = JSON.stringify(
         {

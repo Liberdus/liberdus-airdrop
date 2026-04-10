@@ -176,8 +176,6 @@ function formatDecodedError(decoded, context, runtime) {
       return "Merkle root must be a non-zero bytes32 value.";
     case "InvalidDeadline":
       return "Deadline must be in the future.";
-    case "DeadlineTooFar":
-      return "Deadline is too far out. The maximum epoch length is 365 days.";
     case "EpochNotStarted":
       return `Epoch ${decoded.args[0].toString()} has not been started yet.`;
     case "AlreadyClaimed":
@@ -185,9 +183,9 @@ function formatDecodedError(decoded, context, runtime) {
     case "InvalidProof":
       return "Claim data is invalid. Refresh your round data and try again.";
     case "ClaimWindowClosed":
-      return `This round is closed. Claims ended at ${formatDeadline(decoded.args[1])}.`;
-    case "ActiveEpoch":
-      return `Withdraw is locked while epoch ${decoded.args[0].toString()} is still active. The current lock ends at ${formatDeadline(decoded.args[1])}.`;
+      return Number(decoded.args[1]) === 0
+        ? "This round is closed."
+        : `This round is closed. Claims ended at ${formatDeadline(decoded.args[1])}.`;
     case "InvalidRecoverToken":
       return "The primary airdrop token cannot be recovered with recoverERC20.";
     case "OwnableUnauthorizedAccount":

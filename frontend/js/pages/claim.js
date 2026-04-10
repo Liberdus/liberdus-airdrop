@@ -18,7 +18,7 @@ import {
   syncWalletState,
   bindWalletEvents,
 } from "../shared/wallet.js";
-import { loadClaimCatalog, fetchClaimArtifact, findClaimEntry } from "../shared/claims.js";
+import { loadClaimCatalog, fetchClaimSource, findClaimEntry } from "../shared/claims.js";
 
 const runtime = {
   provider: null,
@@ -34,7 +34,6 @@ const runtime = {
   claimCatalog: null,
   rounds: [],
   noticeTimerId: null,
-  rootEpochMap: new Map(),
 };
 
 const els = {
@@ -151,11 +150,11 @@ function syncWalletButton() {
 function getVisibleRounds() {
   return runtime.rounds
     .filter(
-      (round) => !["not-live", "closed", "no-allocation", "connect"].includes(round.status),
+      (round) => !["not-live", "closed", "no-allocation", "connect", "mismatch", "error"].includes(round.status),
     )
     .sort((left, right) => {
-      const leftEpoch = Number(left.resolvedEpoch || left.source.epoch || 0);
-      const rightEpoch = Number(right.resolvedEpoch || right.source.epoch || 0);
+      const leftEpoch = Number(left.epoch || left.source.epoch || 0);
+      const rightEpoch = Number(right.epoch || right.source.epoch || 0);
       return rightEpoch - leftEpoch;
     });
 }
@@ -213,7 +212,7 @@ function renderRoundList() {
           <button
             type="button"
             class="round-claim-button"
-            data-round-claim="${round.resolvedEpoch || ""}"
+            data-round-claim="${round.epoch || ""}"
             ${action.disabled ? "disabled" : ""}
           >${action.label}</button>
         </article>
@@ -231,14 +230,10 @@ function renderRoundList() {
 }
 
 async function buildRoundView(source) {
-  const artifact = await fetchClaimArtifact(source, runtime.claimCatalog.baseUrl);
+  const artifact = await fetchClaimSource(source, runtime.claimCatalog.baseUrl, runtime.tokenDecimals);
   const entry = runtime.account ? findClaimEntry(artifact, runtime.account) : null;
   const amountRaw = entry ? BigInt(entry.amountRaw) : 0n;
-  const rootKey = String(artifact.root || "").toLowerCase();
-  const rootMatches = source.epoch
-    ? [source.epoch]
-    : (runtime.rootEpochMap.get(rootKey) || []);
-  const resolvedEpoch = rootMatches.length === 1 ? rootMatches[0] : source.epoch;
+  const epoch = source.epoch;
 
   let onchainRoot = ethers.ZeroHash;
   let deadline = 0n;
@@ -248,14 +243,14 @@ async function buildRoundView(source) {
   try {
     if (runtime.provider) {
       const { airdrop } = getContracts({ config: runtime.config, provider: runtime.provider });
-      if (airdrop && resolvedEpoch) {
+      if (airdrop && epoch) {
         [onchainRoot, deadline] = await Promise.all([
-          airdrop.merkleRoots(BigInt(resolvedEpoch)),
-          airdrop.deadlines(BigInt(resolvedEpoch)),
+          airdrop.merkleRoots(BigInt(epoch)),
+          airdrop.deadlines(BigInt(epoch)),
         ]);
 
         if (entry) {
-          claimed = await airdrop.isClaimed(BigInt(resolvedEpoch), BigInt(entry.index));
+          claimed = await airdrop.isClaimed(BigInt(epoch), BigInt(entry.index));
         }
       }
     }
@@ -266,13 +261,11 @@ async function buildRoundView(source) {
   let status = "connect";
   if (errorMessage) {
     status = "error";
-  } else if (!source.epoch && rootMatches.length > 1) {
-    status = "ambiguous";
-  } else if (!resolvedEpoch || !onchainRoot || onchainRoot === ethers.ZeroHash) {
+  } else if (!epoch || !onchainRoot || onchainRoot === ethers.ZeroHash) {
     status = "not-live";
   } else if (String(artifact.root || "").toLowerCase() !== onchainRoot.toLowerCase()) {
     status = "mismatch";
-  } else if (deadline && BigInt(Math.floor(Date.now() / 1000)) >= deadline) {
+  } else if (deadline === 0n || BigInt(Math.floor(Date.now() / 1000)) >= deadline) {
     status = "closed";
   } else if (!runtime.account) {
     status = "connect";
@@ -288,7 +281,7 @@ async function buildRoundView(source) {
     source,
     artifact,
     entry,
-    resolvedEpoch,
+    epoch,
     amountRaw,
     onchainRoot,
     deadline,
@@ -301,28 +294,8 @@ async function buildRoundView(source) {
 async function refreshRounds() {
   if (!runtime.claimCatalog?.sources?.length) {
     runtime.rounds = [];
-    runtime.rootEpochMap = new Map();
     renderRoundList();
     return;
-  }
-
-  runtime.rootEpochMap = new Map();
-  if (runtime.provider && runtime.currentEpoch > 0) {
-    const { airdrop } = getContracts({ config: runtime.config, provider: runtime.provider });
-    if (airdrop) {
-      const epochIds = Array.from({ length: runtime.currentEpoch }, (_, index) => index + 1);
-      const roots = await Promise.all(
-        epochIds.map((epoch) => airdrop.merkleRoots(BigInt(epoch))),
-      );
-
-      roots.forEach((root, index) => {
-        if (!root || root === ethers.ZeroHash) return;
-        const key = root.toLowerCase();
-        const matches = runtime.rootEpochMap.get(key) || [];
-        matches.push(epochIds[index]);
-        runtime.rootEpochMap.set(key, matches);
-      });
-    }
   }
 
   runtime.rounds = await Promise.all(runtime.claimCatalog.sources.map((source) => buildRoundView(source)));
@@ -354,7 +327,7 @@ async function refreshPage() {
 }
 
 async function claimRound(roundEpoch) {
-  const round = getVisibleRounds().find((candidate) => candidate.resolvedEpoch === roundEpoch);
+  const round = getVisibleRounds().find((candidate) => candidate.epoch === roundEpoch);
   if (!round || round.status !== "claimable" || !round.entry) {
     throw new Error("This claim is not available right now.");
   }
@@ -371,7 +344,7 @@ async function claimRound(roundEpoch) {
   await sendTransaction(
     "Claim",
     () => airdrop.claim(
-      BigInt(round.resolvedEpoch),
+      BigInt(round.epoch),
       BigInt(round.entry.index),
       normalizeAddress(round.entry.account),
       BigInt(round.entry.amountRaw),

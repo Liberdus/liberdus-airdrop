@@ -17,14 +17,13 @@ export const UI_ROOT = new URL("../../", import.meta.url);
 export const AIRDROP_ABI = [
   "function owner() view returns (address)",
   "function currentEpoch() view returns (uint256)",
-  "function latestDeadline() view returns (uint256)",
-  "function latestDeadlineEpoch() view returns (uint256)",
   "function merkleRoots(uint256) view returns (bytes32)",
   "function deadlines(uint256) view returns (uint256)",
   "function epochClaimedAmounts(uint256) view returns (uint256)",
   "function epochInfo(uint256) view returns (bytes32,uint256,uint256)",
   "function isClaimed(uint256,uint256) view returns (bool)",
   "function startNewAirdrop(bytes32,uint256)",
+  "function setEpochDeadline(uint256,uint256)",
   "function claim(uint256,uint256,address,uint256,bytes32[])",
   "function withdraw(address,uint256)",
   "function recoverERC20(address,address,uint256)",
@@ -34,12 +33,10 @@ export const AIRDROP_ERROR_ABI = [
   "error ZeroAddress()",
   "error InvalidMerkleRoot()",
   "error InvalidDeadline()",
-  "error DeadlineTooFar()",
   "error EpochNotStarted(uint256 epoch)",
   "error AlreadyClaimed(uint256 epoch, uint256 index)",
   "error InvalidProof()",
   "error ClaimWindowClosed(uint256 epoch, uint256 deadline)",
-  "error ActiveEpoch(uint256 epoch, uint256 deadline)",
   "error InvalidRecoverToken()",
 ];
 

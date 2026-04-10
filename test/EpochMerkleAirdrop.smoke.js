@@ -5,7 +5,7 @@ const { buildTree, deployFixture, fundAirdrop, sumAmounts } = require("./helpers
 
 describe("EpochMerkleAirdrop", function () {
   describe("smoke flows", function () {
-    it("runs an overlapping-epoch lifecycle from funding through final withdrawals", async function () {
+    it("runs an overlapping-epoch lifecycle from funding through claims, deadline updates, and withdrawals", async function () {
       const { owner, alice, bob, carol, treasury, token, airdrop } = await loadFixture(deployFixture);
       const now = await time.latest();
 
@@ -30,10 +30,6 @@ describe("EpochMerkleAirdrop", function () {
 
       await fundAirdrop(token, owner, airdrop, totalFunding);
 
-      await expect(airdrop.withdraw(treasury.address, 1n))
-        .to.be.revertedWithCustomError(airdrop, "ActiveEpoch")
-        .withArgs(1, deadlineOne);
-
       await expect(
         airdrop.claim(1, epochOneClaims[0].index, alice.address, epochOneClaims[0].amount, treeOne.proofFor(0n))
       )
@@ -44,9 +40,6 @@ describe("EpochMerkleAirdrop", function () {
         .to.emit(airdrop, "AirdropStarted")
         .withArgs(2, treeTwo.root, deadlineTwo);
 
-      expect(await airdrop.latestDeadline()).to.equal(deadlineTwo);
-      expect(await airdrop.latestDeadlineEpoch()).to.equal(2);
-
       await expect(
         airdrop.claim(2, epochTwoClaims[0].index, carol.address, epochTwoClaims[0].amount, treeTwo.proofFor(0n))
       )
@@ -56,13 +49,11 @@ describe("EpochMerkleAirdrop", function () {
       expect(await airdrop.epochClaimedAmounts(1)).to.equal(epochOneClaims[0].amount);
       expect(await airdrop.epochClaimedAmounts(2)).to.equal(epochTwoClaims[0].amount);
 
+      await expect(airdrop.setEpochDeadline(2, 0))
+        .to.emit(airdrop, "DeadlineUpdated")
+        .withArgs(2, deadlineTwo, 0);
+
       await time.increaseTo(deadlineOne + 1);
-
-      await expect(airdrop.withdraw(treasury.address, 1n))
-        .to.be.revertedWithCustomError(airdrop, "ActiveEpoch")
-        .withArgs(2, deadlineTwo);
-
-      await time.increaseTo(deadlineTwo + 1);
 
       const remainingBalance = await token.balanceOf(await airdrop.getAddress());
       const firstSweep = ethers.parseEther("50");

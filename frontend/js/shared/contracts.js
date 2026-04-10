@@ -27,8 +27,6 @@ export async function fetchDashboardSnapshot({ config, provider, account }) {
   const snapshot = {
     owner: null,
     currentEpoch: null,
-    latestDeadline: null,
-    latestDeadlineEpoch: null,
     tokenSymbol: null,
     tokenDecimals: null,
     walletTokenBalance: null,
@@ -39,17 +37,13 @@ export async function fetchDashboardSnapshot({ config, provider, account }) {
   };
 
   if (airdrop) {
-    const [owner, currentEpoch, latestDeadline, latestDeadlineEpoch] = await Promise.all([
+    const [owner, currentEpoch] = await Promise.all([
       airdrop.owner(),
       airdrop.currentEpoch(),
-      airdrop.latestDeadline(),
-      airdrop.latestDeadlineEpoch(),
     ]);
 
     snapshot.owner = owner;
     snapshot.currentEpoch = currentEpoch;
-    snapshot.latestDeadline = latestDeadline;
-    snapshot.latestDeadlineEpoch = latestDeadlineEpoch;
   }
 
   if (token) {

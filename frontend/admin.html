@@ -93,9 +93,6 @@
 
           <div class="status-grid">
             <article><h3>Current Epoch</h3><p id="currentEpoch">-</p></article>
-            <article><h3>Latest Deadline Local</h3><p id="latestDeadlineLocalValue">-</p></article>
-            <article><h3>Latest Deadline UTC</h3><p id="latestDeadlineUtcValue">-</p></article>
-            <article><h3>Latest Deadline Epoch</h3><p id="latestDeadlineEpochValue">-</p></article>
             <article><h3>Token</h3><p id="tokenSummary">-</p></article>
             <article><h3>Wallet Token Balance</h3><p id="walletTokenBalance">-</p></article>
             <article><h3>Airdrop Token Balance</h3><p id="airdropTokenBalance">-</p></article>
@@ -106,14 +103,18 @@
           <section class="frame">
             <div class="panel-title-row">
               <div>
-                <h2>Start New Airdrop</h2>
+                <h2>Prepare New Airdrop</h2>
               </div>
             </div>
 
             <form id="startAirdropForm" class="form-grid">
               <label class="full-width">
+                <span>Claims JSON</span>
+                <input id="uploadClaimsFileInput" type="file" accept=".json,application/json">
+              </label>
+              <label class="full-width">
                 <span>Merkle Root</span>
-                <input id="startRootInput" type="text" placeholder="0x...">
+                <input id="startRootInput" type="text" placeholder="Upload a claims JSON file" readonly>
               </label>
               <label>
                 <span>Deadline (local time)</span>
@@ -121,19 +122,75 @@
               </label>
               <label>
                 <span>Deadline (UTC)</span>
-                <input id="startDeadlineUtcInput" type="text" placeholder="2026-04-10 20:00:00 UTC">
+                <input id="startDeadlineUtcInput" type="datetime-local">
               </label>
               <label>
                 <span>Unix Deadline</span>
                 <input id="startDeadlineUnix" type="text" readonly>
               </label>
-              <div class="full-width">
+              <div class="full-width button-row">
                 <button type="submit">Start New Airdrop</button>
+                <button id="clearUploadedButton" type="button" class="ghost" disabled>Clear File</button>
               </div>
             </form>
+
+            <div class="table-wrap upload-preview-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Index</th>
+                    <th>Wallet</th>
+                    <th>Amount</th>
+                  </tr>
+                </thead>
+                <tbody id="uploadPreviewBody">
+                  <tr><td colspan="3" class="empty-row">Upload a claims JSON file to preview it.</td></tr>
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colspan="2" id="uploadedClaimCount" class="table-footer-label">-</td>
+                    <td class="table-footer-value">
+                      <div class="table-footer-actions">
+                        <span id="uploadedClaimTotal">-</span>
+                        <button id="fundUploadedButton" type="button" class="secondary" disabled>Fund Contract</button>
+                      </div>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </section>
 
           <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Epoch Management</h2>
+              </div>
+            </div>
+
+            <form id="updateDeadlineForm" class="form-grid">
+              <label>
+                <span>Epoch</span>
+                <input id="updateEpochInput" type="number" min="1" placeholder="1">
+              </label>
+              <label>
+                <span>Deadline (local time)</span>
+                <input id="updateDeadlineInput" type="datetime-local">
+              </label>
+              <label>
+                <span>Deadline (UTC)</span>
+                <input id="updateDeadlineUtcInput" type="datetime-local">
+              </label>
+              <label>
+                <span>Unix Deadline</span>
+                <input id="updateDeadlineUnix" type="text" readonly>
+              </label>
+              <div class="full-width button-row">
+                <button type="submit">Update Deadline</button>
+                <button id="disableEpochButton" type="button" class="secondary">Disable Epoch</button>
+              </div>
+            </form>
+
             <div class="panel-title-row">
               <div>
                 <h2>Treasury</h2>
@@ -180,7 +237,7 @@
                   <th>Merkle Root</th>
                   <th>Deadline Local</th>
                   <th>Deadline UTC</th>
-                  <th>Claimed Amount</th>
+                  <th>Claimed / Total</th>
                 </tr>
               </thead>
               <tbody id="epochListBody">

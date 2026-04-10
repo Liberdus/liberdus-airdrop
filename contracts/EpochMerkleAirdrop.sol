@@ -8,7 +8,7 @@ import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /// @title EpochMerkleAirdrop
-/// @notice Distributes an ERC20 token across sequential Merkle-based airdrop epochs.
+/// @notice Distributes an ERC20 token across Merkle-based airdrop epochs with owner-managed deadlines.
 /// @dev
 /// Each epoch stores its own Merkle root, deadline, and claimed bitmap so claim state is isolated
 /// between distributions. The contract must be funded ahead of claims through normal ERC20
@@ -24,9 +24,6 @@ contract EpochMerkleAirdrop is Ownable2Step {
 
     /// @notice Thrown when an epoch deadline is not strictly in the future.
     error InvalidDeadline();
-
-    /// @notice Thrown when an epoch deadline exceeds the maximum supported duration.
-    error DeadlineTooFar();
 
     /// @notice Thrown when a claim references an epoch that has not been created.
     /// @param epoch The epoch id that was requested.
@@ -45,11 +42,6 @@ contract EpochMerkleAirdrop is Ownable2Step {
     /// @param deadline The cutoff timestamp configured for the epoch.
     error ClaimWindowClosed(uint256 epoch, uint256 deadline);
 
-    /// @notice Thrown when the owner tries to withdraw the airdrop token before the furthest deadline ends.
-    /// @param epoch The epoch that currently owns the furthest deadline.
-    /// @param deadline The furthest deadline across all configured epochs.
-    error ActiveEpoch(uint256 epoch, uint256 deadline);
-
     /// @notice Thrown when attempting to recover the primary airdrop token via the generic recovery path.
     error InvalidRecoverToken();
 
@@ -58,6 +50,12 @@ contract EpochMerkleAirdrop is Ownable2Step {
     /// @param merkleRoot The root used to validate claims for the epoch.
     /// @param deadline The timestamp after which claims for the epoch are blocked.
     event AirdropStarted(uint256 indexed epoch, bytes32 indexed merkleRoot, uint256 deadline);
+
+    /// @notice Emitted when the owner changes an epoch deadline.
+    /// @param epoch The epoch whose deadline changed.
+    /// @param previousDeadline The deadline value before the update.
+    /// @param newDeadline The deadline value after the update.
+    event DeadlineUpdated(uint256 indexed epoch, uint256 previousDeadline, uint256 newDeadline);
 
     /// @notice Emitted when a claim succeeds.
     /// @param epoch The epoch that was claimed from.
@@ -82,12 +80,6 @@ contract EpochMerkleAirdrop is Ownable2Step {
 
     /// @notice Most recently created epoch id. Starts at zero before any airdrop is configured.
     uint256 public currentEpoch;
-
-    /// @notice Furthest claim deadline across every configured epoch.
-    uint256 public latestDeadline;
-
-    /// @notice Epoch id that currently owns `latestDeadline`.
-    uint256 public latestDeadlineEpoch;
 
     /// @notice Merkle root used to validate claims for each epoch.
     mapping(uint256 epoch => bytes32 merkleRoot) public merkleRoots;
@@ -114,20 +106,32 @@ contract EpochMerkleAirdrop is Ownable2Step {
     /// @param deadline The timestamp before which claims must be submitted.
     function startNewAirdrop(bytes32 newRoot, uint256 deadline) external onlyOwner {
         if (newRoot == bytes32(0)) revert InvalidMerkleRoot();
-        if (deadline <= block.timestamp) revert InvalidDeadline();
-        if (deadline > block.timestamp + 365 days) revert DeadlineTooFar();
+        _validateFutureDeadline(deadline);
 
         uint256 nextEpoch = currentEpoch + 1;
         currentEpoch = nextEpoch;
         merkleRoots[nextEpoch] = newRoot;
         deadlines[nextEpoch] = deadline;
 
-        if (deadline > latestDeadline) {
-            latestDeadline = deadline;
-            latestDeadlineEpoch = nextEpoch;
+        emit AirdropStarted(nextEpoch, newRoot, deadline);
+    }
+
+    /// @notice Updates the deadline for an existing epoch.
+    /// @dev
+    /// A deadline of zero disables the epoch immediately. Any non-zero deadline must still be in the future
+    /// relative to the current block timestamp.
+    /// @param epoch The epoch whose deadline should be updated.
+    /// @param newDeadline The replacement deadline, or zero to disable claims for the epoch.
+    function setEpochDeadline(uint256 epoch, uint256 newDeadline) external onlyOwner {
+        if (merkleRoots[epoch] == bytes32(0)) revert EpochNotStarted(epoch);
+        if (newDeadline != 0) {
+            _validateFutureDeadline(newDeadline);
         }
 
-        emit AirdropStarted(nextEpoch, newRoot, deadline);
+        uint256 previousDeadline = deadlines[epoch];
+        deadlines[epoch] = newDeadline;
+
+        emit DeadlineUpdated(epoch, previousDeadline, newDeadline);
     }
 
     /// @notice Claims tokens for a Merkle leaf in a specific epoch.
@@ -187,15 +191,11 @@ contract EpochMerkleAirdrop is Ownable2Step {
         return claimedWord & mask == mask;
     }
 
-    /// @notice Withdraws unclaimed airdrop tokens after the latest epoch has fully expired.
+    /// @notice Withdraws airdrop tokens held by the contract.
     /// @param to The recipient of the withdrawn tokens.
     /// @param amount The amount of the airdrop token to withdraw.
     function withdraw(address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert ZeroAddress();
-
-        if (latestDeadlineEpoch != 0 && block.timestamp <= latestDeadline) {
-            revert ActiveEpoch(latestDeadlineEpoch, latestDeadline);
-        }
 
         token.safeTransfer(to, amount);
 
@@ -223,6 +223,12 @@ contract EpochMerkleAirdrop is Ownable2Step {
         uint256 bitIndex = index % 256;
 
         claimedBitMap[epoch][wordIndex] |= 1 << bitIndex;
+    }
+
+    /// @dev Validates that a deadline is in the future.
+    /// @param deadline The candidate deadline to validate.
+    function _validateFutureDeadline(uint256 deadline) internal view {
+        if (deadline <= block.timestamp) revert InvalidDeadline();
     }
 
     /// @dev Computes the leaf hash expected by this contract for Merkle verification.

@@ -1,22 +1,65 @@
 const { ethers } = require("hardhat");
-const { StandardMerkleTree } = require("@openzeppelin/merkle-tree");
+
+function compareHex(left, right) {
+  const leftValue = BigInt(left);
+  const rightValue = BigInt(right);
+
+  if (leftValue === rightValue) return 0;
+  return leftValue < rightValue ? -1 : 1;
+}
+
+function hashLeaf(index, account, amount) {
+  const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
+    ["uint256", "address", "uint256"],
+    [index, account, amount]
+  );
+
+  return ethers.keccak256(ethers.keccak256(encoded));
+}
+
+function hashPair(left, right) {
+  const ordered = compareHex(left, right) <= 0 ? [left, right] : [right, left];
+  return ethers.keccak256(ethers.concat(ordered));
+}
 
 function buildTree(claims) {
-  const values = claims.map(({ index, account, amount }) => [
-    index.toString(),
-    account,
-    amount.toString(),
-  ]);
+  const hashedValues = claims
+    .map((claim, valueIndex) => ({
+      claim,
+      valueIndex,
+      hash: hashLeaf(claim.index, claim.account, claim.amount),
+    }))
+    .sort((left, right) => compareHex(left.hash, right.hash));
 
-  const tree = StandardMerkleTree.of(values, ["uint256", "address", "uint256"]);
+  const tree = new Array((2 * hashedValues.length) - 1);
+  const claimTreeIndices = new Array(claims.length);
+
+  for (const [leafIndex, item] of hashedValues.entries()) {
+    const treeIndex = tree.length - 1 - leafIndex;
+    tree[treeIndex] = item.hash;
+    claimTreeIndices[item.valueIndex] = treeIndex;
+  }
+
+  for (let treeIndex = tree.length - hashedValues.length - 1; treeIndex >= 0; treeIndex -= 1) {
+    tree[treeIndex] = hashPair(tree[(2 * treeIndex) + 1], tree[(2 * treeIndex) + 2]);
+  }
+
   const proofsByIndex = new Map();
+  for (const [valueIndex, claim] of claims.entries()) {
+    let treeIndex = claimTreeIndices[valueIndex];
+    const proof = [];
 
-  for (const [treeIndex, value] of tree.entries()) {
-    proofsByIndex.set(value[0], tree.getProof(treeIndex));
+    while (treeIndex > 0) {
+      const siblingIndex = treeIndex % 2 === 0 ? treeIndex - 1 : treeIndex + 1;
+      proof.push(tree[siblingIndex]);
+      treeIndex = Math.floor((treeIndex - 1) / 2);
+    }
+
+    proofsByIndex.set(claim.index.toString(), proof);
   }
 
   return {
-    root: tree.root,
+    root: tree[0],
     proofFor(index) {
       return proofsByIndex.get(index.toString());
     },

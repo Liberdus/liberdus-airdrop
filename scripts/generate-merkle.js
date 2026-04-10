@@ -1,7 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { ethers } = require("ethers");
-const { StandardMerkleTree } = require("@openzeppelin/merkle-tree");
 
 const LEAF_TYPES = ["uint256", "address", "uint256"];
 
@@ -73,6 +72,28 @@ function parseArgs(argv) {
   return options;
 }
 
+function compareHex(left, right) {
+  const leftValue = BigInt(left);
+  const rightValue = BigInt(right);
+
+  if (leftValue === rightValue) return 0;
+  return leftValue < rightValue ? -1 : 1;
+}
+
+function trimFormattedUnits(value) {
+  return value.includes(".") ? value.replace(/\.?0+$/, "") : value;
+}
+
+function hashLeaf(index, account, amountRaw) {
+  const encoded = ethers.AbiCoder.defaultAbiCoder().encode(LEAF_TYPES, [index, account, amountRaw]);
+  return ethers.keccak256(ethers.keccak256(encoded));
+}
+
+function hashPair(left, right) {
+  const ordered = compareHex(left, right) <= 0 ? [left, right] : [right, left];
+  return ethers.keccak256(ethers.concat(ordered));
+}
+
 function loadClaims(filePath) {
   const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
 
@@ -88,6 +109,7 @@ function normalizeClaims(claims, decimals) {
   }
 
   const seenIndexes = new Set();
+  const seenAccounts = new Set();
 
   return claims.map((entry, idx) => {
     if (!entry || typeof entry !== "object") {
@@ -110,16 +132,23 @@ function normalizeClaims(claims, decimals) {
     }
 
     const account = ethers.getAddress(entry.account);
+    const accountKey = account.toLowerCase();
+    if (seenAccounts.has(accountKey)) {
+      throw new Error(`Duplicate claim account detected: ${account}`);
+    }
+    seenAccounts.add(accountKey);
+
     let amountRaw;
     let amountDisplay;
 
-    if (entry.amountRaw != null) {
+    if (entry.amountRaw != null && String(entry.amountRaw).trim() !== "") {
       amountRaw = BigInt(entry.amountRaw);
       amountDisplay = entry.amount != null
-        ? String(entry.amount)
-        : ethers.formatUnits(amountRaw, decimals);
+        ? String(entry.amount).trim()
+        : trimFormattedUnits(ethers.formatUnits(amountRaw, decimals));
     } else if (entry.amount != null) {
-      amountDisplay = String(entry.amount);
+      amountDisplay = String(entry.amount).trim();
+      if (!amountDisplay) throw new Error(`Claim ${idx} amount is required.`);
       amountRaw = ethers.parseUnits(amountDisplay, decimals);
     } else {
       throw new Error(`Claim ${idx} must include either amount or amountRaw.`);
@@ -138,39 +167,42 @@ function normalizeClaims(claims, decimals) {
   });
 }
 
-function buildOutput(claims, sourcePath, decimals) {
-  const values = claims.map((claim) => [
-    claim.index.toString(),
-    claim.account,
-    claim.amountRaw.toString(),
-  ]);
+function buildMerkleRoot(claims) {
+  const hashedValues = claims
+    .map((claim) => hashLeaf(claim.index, claim.account, claim.amountRaw))
+    .sort(compareHex);
 
-  const tree = StandardMerkleTree.of(values, LEAF_TYPES);
-  const proofsByIndex = new Map();
+  const tree = new Array((2 * hashedValues.length) - 1);
 
-  for (const [treeIndex, value] of tree.entries()) {
-    proofsByIndex.set(value[0], tree.getProof(treeIndex));
+  for (const [leafIndex, hash] of hashedValues.entries()) {
+    tree[tree.length - 1 - leafIndex] = hash;
   }
 
+  for (let treeIndex = tree.length - hashedValues.length - 1; treeIndex >= 0; treeIndex -= 1) {
+    tree[treeIndex] = hashPair(tree[(2 * treeIndex) + 1], tree[(2 * treeIndex) + 2]);
+  }
+
+  return tree[0];
+}
+
+function buildOutput(claims, sourcePath, decimals) {
+  const totalAmountRaw = claims.reduce((total, claim) => total + claim.amountRaw, 0n);
+
   return {
-    root: tree.root,
+    root: buildMerkleRoot(claims),
     leafEncoding: LEAF_TYPES,
     decimals,
+    claimCount: claims.length,
+    totalAmount: trimFormattedUnits(ethers.formatUnits(totalAmountRaw, decimals)),
+    totalAmountRaw: totalAmountRaw.toString(),
     generatedAt: new Date().toISOString(),
     sourceFile: path.basename(sourcePath),
-    claims: claims.map((claim) => ({
-      index: claim.index.toString(),
-      account: claim.account,
-      amount: claim.amount,
-      amountRaw: claim.amountRaw.toString(),
-      proof: proofsByIndex.get(claim.index.toString()) || [],
-    })),
   };
 }
 
 function defaultOutputPath(inputPath) {
   const parsed = path.parse(inputPath);
-  return path.join(parsed.dir, `${parsed.name}.merkle.json`);
+  return path.join(parsed.dir, `${parsed.name}.summary.json`);
 }
 
 function main() {
@@ -184,11 +216,15 @@ function main() {
     return;
   }
 
-  const resolvedOutput = path.resolve(options.outputPath || defaultOutputPath(resolvedInput));
-  fs.writeFileSync(resolvedOutput, `${JSON.stringify(output, null, 2)}\n`);
+  if (options.outputPath) {
+    const resolvedOutput = path.resolve(options.outputPath || defaultOutputPath(resolvedInput));
+    fs.writeFileSync(resolvedOutput, `${JSON.stringify(output, null, 2)}\n`);
+    console.log(`Wrote summary file: ${resolvedOutput}`);
+  }
 
   console.log(`Merkle root: ${output.root}`);
-  console.log(`Wrote proof file: ${resolvedOutput}`);
+  console.log(`Claim count: ${output.claimCount}`);
+  console.log(`Total amount: ${output.totalAmount}`);
 }
 
 try {

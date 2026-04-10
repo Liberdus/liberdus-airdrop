@@ -942,6 +942,38 @@ select {
   color: var(--text);
 }
 
+.upload-preview-wrap {
+  margin-top: 18px;
+}
+
+tfoot td {
+  border-top: 1px solid rgba(251, 175, 64, 0.12);
+}
+
+.table-footer-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.table-footer-value {
+  min-width: 220px;
+}
+
+.table-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.table-footer-actions span {
+  color: #fff6df;
+  font-weight: 700;
+}
+
 .table-wrap {
   overflow-x: auto;
 }

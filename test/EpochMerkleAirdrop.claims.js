@@ -207,6 +207,22 @@ describe("EpochMerkleAirdrop", function () {
         .withArgs(1, deadline);
     });
 
+    it("blocks claims immediately after an owner disables the epoch deadline", async function () {
+      const { owner, alice, token, airdrop } = await loadFixture(deployFixture);
+      const claims = [{ index: 0n, account: alice.address, amount: ethers.parseEther("100") }];
+      const tree = buildTree(claims);
+
+      await airdrop.startNewAirdrop(tree.root, (await time.latest()) + 3600);
+      await fundAirdrop(token, owner, airdrop, sumAmounts(claims));
+      await airdrop.setEpochDeadline(1, 0);
+
+      await expect(
+        airdrop.claim(1, claims[0].index, alice.address, claims[0].amount, tree.proofFor(0n))
+      )
+        .to.be.revertedWithCustomError(airdrop, "ClaimWindowClosed")
+        .withArgs(1, 0);
+    });
+
     it("reverts underfunded claims without marking them as claimed", async function () {
       const { owner, alice, token, airdrop } = await loadFixture(deployFixture);
       const claims = [{ index: 0n, account: alice.address, amount: ethers.parseEther("100") }];

@@ -1,4 +1,5 @@
 require("@nomicfoundation/hardhat-toolbox");
+require("./tasks/fund-owner-wallet");
 
 module.exports = {
   solidity: {

@@ -99,7 +99,7 @@ export function formatUtcInputValue(value) {
     date.getUTCFullYear(),
     pad2(date.getUTCMonth() + 1),
     pad2(date.getUTCDate()),
-  ].join("-") + ` ${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())} UTC`;
+  ].join("-") + `T${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}`;
 }
 
 export function getUnixFromDateTimeLocal(value) {
@@ -111,7 +111,7 @@ export function getUnixFromUtcInput(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
 
-  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\s*UTC|Z)?$/i);
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/i);
   if (!match) return "";
 
   const [, year, month, day, hours, minutes, seconds = "00"] = match;

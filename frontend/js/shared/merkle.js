@@ -1,60 +1,126 @@
 import { ethers } from "./ethers.js";
-import { parseHumanAmount, parseRequiredBigInt, normalizeAddress } from "./format.js";
+import { normalizeAddress, parseHumanAmount, parseRequiredBigInt } from "./format.js";
 
-function compareHex(a, b) {
-  const aValue = BigInt(a);
-  const bValue = BigInt(b);
-  if (aValue === bValue) return 0;
-  return aValue < bValue ? -1 : 1;
+export const STANDARD_MERKLE_LEAF_TYPES = ["uint256", "address", "uint256"];
+
+function compareHex(left, right) {
+  const leftValue = BigInt(left);
+  const rightValue = BigInt(right);
+
+  if (leftValue === rightValue) return 0;
+  return leftValue < rightValue ? -1 : 1;
+}
+
+function trimFormattedUnits(value) {
+  return value.includes(".") ? value.replace(/\.?0+$/, "") : value;
 }
 
 function hashLeaf(index, account, amountRaw) {
   const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint256", "address", "uint256"],
+    STANDARD_MERKLE_LEAF_TYPES,
     [index, account, amountRaw],
   );
 
   return ethers.keccak256(ethers.keccak256(encoded));
 }
 
-function hashPair(a, b) {
-  const ordered = compareHex(a, b) <= 0 ? [a, b] : [b, a];
+function hashPair(left, right) {
+  const ordered = compareHex(left, right) <= 0 ? [left, right] : [right, left];
   return ethers.keccak256(ethers.concat(ordered));
 }
 
-export function parseClaimsJson(rawValue, tokenDecimals) {
-  let raw;
+export function normalizeClaimsInput(rawInput, tokenDecimals) {
+  const rawClaims = Array.isArray(rawInput)
+    ? rawInput
+    : rawInput?.claims;
 
-  try {
-    raw = JSON.parse(rawValue);
-  } catch {
-    throw new Error("Claims JSON must be valid JSON.");
+  if (!Array.isArray(rawClaims)) {
+    throw new Error("Claims JSON must be an array or an object with a claims array.");
   }
 
-  if (!Array.isArray(raw)) throw new Error("Claims JSON must be an array.");
+  if (rawClaims.length === 0) {
+    throw new Error("Claims array is empty.");
+  }
 
-  return raw.map((entry, idx) => {
+  const seenIndexes = new Set();
+  const seenAccounts = new Set();
+
+  return rawClaims.map((entry, idx) => {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`Claim ${idx} must be an object.`);
+    }
+
+    const index = parseRequiredBigInt(entry.index, `Claim ${idx} index`);
+    if (index < 0n) {
+      throw new Error(`Claim ${idx} index cannot be negative.`);
+    }
+
+    const indexKey = index.toString();
+    if (seenIndexes.has(indexKey)) {
+      throw new Error(`Claim ${idx} reuses index ${indexKey}. Each index must be unique.`);
+    }
+    seenIndexes.add(indexKey);
+
     const account = normalizeAddress(entry.account);
     if (!account || account === ethers.ZeroAddress) {
       throw new Error(`Claim ${idx} has an invalid account.`);
     }
 
-    const index = parseRequiredBigInt(entry.index, `Claim ${idx} index`);
-    const amountRaw = entry.amountRaw != null
-      ? parseRequiredBigInt(entry.amountRaw, `Claim ${idx} amountRaw`)
-      : parseHumanAmount(String(entry.amount), tokenDecimals);
+    const accountKey = account.toLowerCase();
+    if (seenAccounts.has(accountKey)) {
+      throw new Error(`Claim ${idx} reuses account ${account}. Each wallet can appear only once per round.`);
+    }
+    seenAccounts.add(accountKey);
+
+    let amountRaw;
+    let amountDisplay;
+
+    if (entry.amountRaw != null && String(entry.amountRaw).trim() !== "") {
+      amountRaw = parseRequiredBigInt(entry.amountRaw, `Claim ${idx} amountRaw`);
+      amountDisplay = entry.amount != null
+        ? String(entry.amount).trim()
+        : trimFormattedUnits(ethers.formatUnits(amountRaw, tokenDecimals));
+    } else if (entry.amount != null) {
+      amountDisplay = String(entry.amount).trim();
+      if (!amountDisplay) throw new Error(`Claim ${idx} amount is required.`);
+      amountRaw = parseHumanAmount(amountDisplay, tokenDecimals);
+    } else {
+      throw new Error(`Claim ${idx} must include either amount or amountRaw.`);
+    }
+
+    if (amountRaw < 0n) {
+      throw new Error(`Claim ${idx} amount cannot be negative.`);
+    }
 
     return {
       index,
       account,
-      amountDisplay: entry.amount != null ? String(entry.amount) : ethers.formatUnits(amountRaw, tokenDecimals),
       amountRaw,
+      amountDisplay,
     };
   });
 }
 
+export function parseClaimsJson(rawValue, tokenDecimals) {
+  let rawInput;
+
+  try {
+    rawInput = JSON.parse(rawValue);
+  } catch {
+    throw new Error("Claims JSON must be valid JSON.");
+  }
+
+  return normalizeClaimsInput(rawInput, tokenDecimals);
+}
+
+export function sumClaimAmounts(claims) {
+  return claims.reduce((total, claim) => total + claim.amountRaw, 0n);
+}
+
 export function buildStandardMerkleData(claims) {
-  if (!claims.length) throw new Error("Claims array is empty.");
+  if (!Array.isArray(claims) || claims.length === 0) {
+    throw new Error("Claims array is empty.");
+  }
 
   const hashedValues = claims
     .map((claim, valueIndex) => ({
@@ -73,12 +139,14 @@ export function buildStandardMerkleData(claims) {
     claimTreeIndices[item.valueIndex] = treeIndex;
   }
 
-  for (let index = tree.length - hashedValues.length - 1; index >= 0; index -= 1) {
-    tree[index] = hashPair(tree[(2 * index) + 1], tree[(2 * index) + 2]);
+  for (let treeIndex = tree.length - hashedValues.length - 1; treeIndex >= 0; treeIndex -= 1) {
+    tree[treeIndex] = hashPair(tree[(2 * treeIndex) + 1], tree[(2 * treeIndex) + 2]);
   }
 
   return {
     root: tree[0],
+    totalAmountRaw: sumClaimAmounts(claims),
+    claimCount: claims.length,
     claims: claims.map((claim, valueIndex) => {
       let treeIndex = claimTreeIndices[valueIndex];
       const proof = [];
@@ -89,23 +157,32 @@ export function buildStandardMerkleData(claims) {
         treeIndex = Math.floor((treeIndex - 1) / 2);
       }
 
-      return { ...claim, proof };
+      return {
+        ...claim,
+        proof,
+      };
     }),
   };
 }
 
-export function parseProofJson(value) {
-  let proof;
+export function buildClaimRound(rawInput, tokenDecimals) {
+  const normalizedClaims = typeof rawInput === "string"
+    ? parseClaimsJson(rawInput, tokenDecimals)
+    : normalizeClaimsInput(rawInput, tokenDecimals);
+  const merkleData = buildStandardMerkleData(normalizedClaims);
 
-  try {
-    proof = JSON.parse(value);
-  } catch {
-    throw new Error("Proof must be valid JSON.");
-  }
-
-  if (!Array.isArray(proof) || proof.some((entry) => !ethers.isHexString(entry))) {
-    throw new Error("Proof must be a JSON array of hex strings.");
-  }
-
-  return proof;
+  return {
+    root: merkleData.root,
+    leafEncoding: [...STANDARD_MERKLE_LEAF_TYPES],
+    decimals: tokenDecimals,
+    claimCount: merkleData.claimCount,
+    totalAmountRaw: merkleData.totalAmountRaw.toString(),
+    claims: merkleData.claims.map((claim) => ({
+      index: claim.index.toString(),
+      account: claim.account,
+      amount: claim.amountDisplay,
+      amountRaw: claim.amountRaw.toString(),
+      proof: [...claim.proof],
+    })),
+  };
 }

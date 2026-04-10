@@ -1,13 +1,16 @@
 # Adding a New Airdrop
 
-This repo uses a two-file flow for each airdrop round:
+This repo now uses a single raw claims JSON per round.
 
-1. a simple source claims JSON you create manually
-2. a generated Merkle artifact JSON the frontend uses for claiming
+That same raw file is used for:
 
-The source claims JSON is the human-edited input. The generated Merkle artifact contains the Merkle root plus each wallet's proof data.
+1. calculating the Merkle root
+2. funding the contract
+3. publishing claim data for the frontend
 
-## 1. Create The Source Claims JSON
+The claimant page does not use stored proof artifacts. It loads the raw claims JSON, rebuilds the Merkle tree in the browser, and generates proofs client-side.
+
+## 1. Create The Raw Claims JSON
 
 Create a file under [examples](C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/examples) with one entry per wallet.
 
@@ -33,6 +36,7 @@ Rules:
 - `index` must be unique per row
 - `index` should usually start at `0` and increase by `1`
 - `account` must be a valid EVM address
+- each wallet should appear only once per round
 - use `amount` for human token units like `"100"` or `"250.5"`
 - if you already have base units, you can use `amountRaw` instead of `amount`
 
@@ -48,29 +52,29 @@ Example using `amountRaw`:
 ]
 ```
 
-## 2. Generate The Merkle Artifact
+## 2. Calculate The Merkle Root
 
-From [liberdus-airdrop](C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop), run:
+You can calculate the root either in the admin UI or with the CLI.
+
+CLI:
 
 ```bash
-npm run merkle -- .\examples\my-round.claims.json --out .\frontend\claims\my-round.merkle.json
+npm run merkle -- .\examples\my-round.claims.json
 ```
 
-This does two things:
+That prints:
 
-- prints the Merkle root in the terminal
-- writes the generated proof artifact to `frontend/claims/`
+- the Merkle root
+- claim count
+- total rewards
 
-The output artifact includes:
+If you want a JSON summary instead:
 
-- `root`
-- `leafEncoding`
-- `decimals`
-- `generatedAt`
-- `sourceFile`
-- `claims[]` with `index`, `account`, `amount`, `amountRaw`, and `proof`
+```bash
+npm run merkle -- .\examples\my-round.claims.json --stdout
+```
 
-## 3. Start The Airdrop On-Chain
+## 3. Fund And Start The Airdrop
 
 Open the admin page:
 
@@ -79,9 +83,9 @@ Open the admin page:
 Then:
 
 1. connect the owner wallet
-2. fund the airdrop contract with enough LIB
-3. copy the printed Merkle root from the CLI output
-4. paste that root into the `Merkle Root` field
+2. upload the raw claims JSON file
+3. verify the preview table, total rewards, and calculated root
+4. optionally click `Fund Contract With Uploaded Total`
 5. enter the deadline
 6. submit `Start New Airdrop`
 
@@ -89,13 +93,12 @@ The contract will reject:
 
 - zero roots
 - past deadlines
-- deadlines more than 365 days out
 
-## 4. Publish The Claim Artifact To The Frontend
+## 4. Publish The Raw Claims File
 
 To make the claimant page aware of the new round:
 
-1. keep the generated `*.merkle.json` file in [frontend/claims](C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/frontend/claims)
+1. copy the raw claims JSON file into [frontend/claims](C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/frontend/claims)
 2. add a row to [index.json](C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/frontend/claims/index.json)
 
 Example:
@@ -103,14 +106,14 @@ Example:
 ```json
 {
   "epoch": 11,
-  "file": "./my-round.merkle.json"
+  "file": "./my-round.claims.json"
 }
 ```
 
 Notes:
 
 - `epoch` must match the on-chain epoch you started
-- `file` must point to the generated Merkle artifact, not the source claims JSON
+- `file` must point to the raw claims JSON, not a generated proof artifact
 
 ## 5. Verify
 
@@ -118,17 +121,27 @@ After publishing:
 
 1. reload the claimant page
 2. connect a wallet that has an allocation
-3. confirm the round appears
-4. confirm the claim amount matches the source JSON
+3. confirm the claim appears
+4. confirm the displayed amount matches the raw claims JSON
 5. test a claim
+
+## Optional Deadline Updates
+
+If you need to close or reschedule an epoch after launch:
+
+1. open the admin page
+2. use `Epoch Management`
+3. set a new future deadline, or disable the epoch by setting its deadline to `0`
+
+The claimant page treats a deadline of `0` as closed.
 
 ## Summary
 
 The normal workflow is:
 
-1. create source claims JSON in `examples/`
-2. generate a Merkle artifact with `npm run merkle`
+1. create raw claims JSON in `examples/`
+2. calculate the root in the admin page or with `npm run merkle`
 3. fund the contract
-4. start the new airdrop with the generated root
-5. add the generated artifact to `frontend/claims/`
+4. start the new airdrop
+5. copy the same raw claims JSON into `frontend/claims/`
 6. add the epoch/file mapping to `frontend/claims/index.json`
