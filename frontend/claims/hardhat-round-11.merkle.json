@@ -1,0 +1,20 @@
+{
+  "root": "0x3cbe311586597be471d8d7cbb3c94b0a18769c20910b6d2aa8a8d5f10a912dcb",
+  "leafEncoding": [
+    "uint256",
+    "address",
+    "uint256"
+  ],
+  "decimals": 18,
+  "generatedAt": "2026-04-10T15:12:27.571Z",
+  "sourceFile": "hardhat-round-11.claims.json",
+  "claims": [
+    {
+      "index": "0",
+      "account": "0xBcd4042DE499D14e55001CcbB24a551F3b954096",
+      "amount": "4321",
+      "amountRaw": "4321000000000000000000",
+      "proof": []
+    }
+  ]
+}

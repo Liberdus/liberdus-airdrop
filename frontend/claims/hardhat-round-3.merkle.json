@@ -1,0 +1,53 @@
+{
+  "root": "0x57dc165950d739c7855a5c7354489cfcf110123c6bf7752493f9257331f83cda",
+  "leafEncoding": [
+    "uint256",
+    "address",
+    "uint256"
+  ],
+  "decimals": 18,
+  "generatedAt": "2026-04-10T00:58:08.235Z",
+  "sourceFile": "hardhat-round-3.claims.json",
+  "claims": [
+    {
+      "index": "0",
+      "account": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "amount": "15",
+      "amountRaw": "15000000000000000000",
+      "proof": [
+        "0xf21072442f10f7317ae215db868a630f33fedf9e4af11c7acc63a9490054961d",
+        "0x92c9b13acb1b37a7f1fc8d389a5c05df35908bc83c7fac9753b54e29d5072526"
+      ]
+    },
+    {
+      "index": "1",
+      "account": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "amount": "12.5",
+      "amountRaw": "12500000000000000000",
+      "proof": [
+        "0x618a0f5472eaca50de1481e3b5a55f5a3c83f8430eb37ab152c4308ed725ddfb",
+        "0x3040ecf847fb1ebb4d76dee3cde20fb550afcf5f8fe123116280e5c79425beec"
+      ]
+    },
+    {
+      "index": "2",
+      "account": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "amount": "8",
+      "amountRaw": "8000000000000000000",
+      "proof": [
+        "0x8381b0b0592b73d90b1120a3aa19b37caf133521b6b168ac8164c42fe8f4e0e8",
+        "0x3040ecf847fb1ebb4d76dee3cde20fb550afcf5f8fe123116280e5c79425beec"
+      ]
+    },
+    {
+      "index": "3",
+      "account": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "amount": "6.25",
+      "amountRaw": "6250000000000000000",
+      "proof": [
+        "0x8f242ebe862b4d156486d1b32bb1ebaccf28a5f10109606dd45ebafed94158b0",
+        "0x92c9b13acb1b37a7f1fc8d389a5c05df35908bc83c7fac9753b54e29d5072526"
+      ]
+    }
+  ]
+}

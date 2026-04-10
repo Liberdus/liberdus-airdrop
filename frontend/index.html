@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Liberdus Airdrop</title>
+    <link rel="icon" type="image/png" href="./assets/liberdus-logo.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-glow" aria-hidden="true"></div>
+    <div class="page-circuit page-circuit-left" aria-hidden="true"></div>
+    <div class="page-circuit page-circuit-right" aria-hidden="true"></div>
+    <div class="toast-stack" aria-live="polite" aria-atomic="true">
+      <div id="claimToast" class="toast" data-tone="info" hidden>
+        <p id="claimToastMessage" class="toast-message"></p>
+        <button id="claimToastClose" type="button" class="toast-close" aria-label="Dismiss notification">x</button>
+      </div>
+    </div>
+
+    <header id="claimHeader" class="page-header">
+      <div class="page-header-inner">
+        <div class="brand-lockup nav-brand">
+          <img class="brand-logo" src="./assets/liberdus-logo.png" alt="" aria-hidden="true">
+          <div>
+            <p class="eyebrow">Liberdus</p>
+            <p class="brand-wordmark">Airdrop</p>
+          </div>
+        </div>
+
+        <div class="claim-topbar-actions">
+          <div class="wallet-menu-shell">
+            <button
+              id="connectButton"
+              type="button"
+              class="wallet-trigger"
+              aria-haspopup="menu"
+              aria-expanded="false"
+            >Connect Wallet</button>
+            <div id="walletMenu" class="wallet-popout" role="menu" hidden>
+              <p class="wallet-popout-label">Connected wallet</p>
+              <div class="wallet-popout-row">
+                <p id="walletMenuAddress" class="wallet-popout-address">-</p>
+                <button id="copyWalletAddressButton" type="button" class="ghost wallet-copy-button">Copy</button>
+              </div>
+              <button id="disconnectButton" type="button" class="ghost wallet-disconnect-button">Disconnect</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell shell-narrow">
+      <div class="center-stage">
+        <section class="frame claim-card">
+          <section class="claim-card-block">
+            <div class="panel-title-row">
+              <div>
+                <h2>Available Claims</h2>
+              </div>
+            </div>
+            <div id="roundList" class="round-list"></div>
+          </section>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="./js/pages/claim.js"></script>
+  </body>
+</html>

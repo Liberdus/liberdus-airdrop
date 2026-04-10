@@ -1,0 +1,65 @@
+{
+  "root": "0x3289fb3cecec8e829da3af92c26ac43a94a3858bb2fe3c8140f182c016f08751",
+  "leafEncoding": [
+    "uint256",
+    "address",
+    "uint256"
+  ],
+  "decimals": 18,
+  "generatedAt": "2026-04-10T00:58:08.237Z",
+  "sourceFile": "hardhat-round-5.claims.json",
+  "claims": [
+    {
+      "index": "0",
+      "account": "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+      "amount": "55",
+      "amountRaw": "55000000000000000000",
+      "proof": [
+        "0x574994207718f93e0e2a9db4f6507c7037471cd67479f20893f23a807aa040e1",
+        "0xcfa0e1603ad62efaebd440a6cb42c1b1b9757c608cec8c093c112f7f6bbecb06",
+        "0x48a6ad1a17371221d16f7e0ef6079846b825490c2a1899aab7954e51bd6fb63e"
+      ]
+    },
+    {
+      "index": "1",
+      "account": "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+      "amount": "44",
+      "amountRaw": "44000000000000000000",
+      "proof": [
+        "0xce4bcc8152f4dcdac26f34c2ecd8dbe37f16da741d2ece9f706d8a8eafbfc714",
+        "0x2f4ed79963a560b7ebd8ca1d41fcf565339330697ff3af97fa0ad24ebad36af7"
+      ]
+    },
+    {
+      "index": "2",
+      "account": "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+      "amount": "33",
+      "amountRaw": "33000000000000000000",
+      "proof": [
+        "0x038ebfa8bc2e45a71d5fed2890d1420ae9ba1c877a35cb62f9036cb17074cf8d",
+        "0xcfa0e1603ad62efaebd440a6cb42c1b1b9757c608cec8c093c112f7f6bbecb06",
+        "0x48a6ad1a17371221d16f7e0ef6079846b825490c2a1899aab7954e51bd6fb63e"
+      ]
+    },
+    {
+      "index": "3",
+      "account": "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+      "amount": "22",
+      "amountRaw": "22000000000000000000",
+      "proof": [
+        "0x1dce8bab1751efc4b61c08e230e2ac8b8e9abf19d256f02d1c105a2dde316acb",
+        "0x48a6ad1a17371221d16f7e0ef6079846b825490c2a1899aab7954e51bd6fb63e"
+      ]
+    },
+    {
+      "index": "4",
+      "account": "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720",
+      "amount": "11",
+      "amountRaw": "11000000000000000000",
+      "proof": [
+        "0x66bac06b84639c3e16dec68fc499aa44ae9b766919f64f24850b66251ffcf1cf",
+        "0x2f4ed79963a560b7ebd8ca1d41fcf565339330697ff3af97fa0ad24ebad36af7"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Liberdus Airdrop Admin</title>
+    <link rel="icon" type="image/png" href="./assets/liberdus-logo.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Manrope:wght@400;500;700;800&display=swap"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-glow" aria-hidden="true"></div>
+    <div class="page-circuit page-circuit-left" aria-hidden="true"></div>
+    <div class="page-circuit page-circuit-right" aria-hidden="true"></div>
+    <div class="toast-stack" aria-live="polite" aria-atomic="true">
+      <div id="adminToast" class="toast" data-tone="info" hidden>
+        <p id="adminToastMessage" class="toast-message"></p>
+        <button id="adminToastClose" type="button" class="toast-close" aria-label="Dismiss notification">x</button>
+      </div>
+    </div>
+
+    <header id="adminHeader" class="page-header">
+      <div class="page-header-inner">
+        <div class="brand-lockup nav-brand">
+          <img class="brand-logo" src="./assets/liberdus-logo.png" alt="" aria-hidden="true">
+          <div>
+            <p class="eyebrow">Liberdus</p>
+            <p class="brand-wordmark">Admin</p>
+          </div>
+        </div>
+
+        <div class="claim-topbar-actions">
+          <div class="wallet-menu-shell">
+            <button
+              id="connectButton"
+              type="button"
+              class="wallet-trigger"
+              aria-haspopup="menu"
+              aria-expanded="false"
+            >Connect Wallet</button>
+            <div id="walletMenu" class="wallet-popout" role="menu" hidden>
+              <p class="wallet-popout-label">Connected wallet</p>
+              <div class="wallet-popout-row">
+                <p id="walletMenuAddress" class="wallet-popout-address">-</p>
+                <button id="copyWalletAddressButton" type="button" class="ghost wallet-copy-button">Copy</button>
+              </div>
+              <button id="disconnectButton" type="button" class="ghost wallet-disconnect-button">Disconnect</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="frame owner-gate">
+        <div class="panel-title-row">
+          <div>
+            <h2>Admin Access</h2>
+          </div>
+        </div>
+
+        <div class="detail-list">
+          <article class="detail-item">
+            <h3>Connected Wallet</h3>
+            <p id="connectedAccount">No wallet connected</p>
+          </article>
+          <article class="detail-item">
+            <h3>Role</h3>
+            <p id="accountRole">Disconnected</p>
+          </article>
+          <article class="detail-item">
+            <h3>Owner</h3>
+            <p id="ownerAddress">-</p>
+          </article>
+        </div>
+
+        <p id="adminGateMessage" class="hint">Connect the owner wallet to view admin controls.</p>
+      </section>
+
+      <div id="adminShell" hidden>
+        <section class="frame status-panel">
+          <div class="panel-title-row">
+            <div>
+              <h2>Contract Status</h2>
+            </div>
+            <button id="refreshButton" type="button" class="ghost">Refresh</button>
+          </div>
+
+          <div class="status-grid">
+            <article><h3>Current Epoch</h3><p id="currentEpoch">-</p></article>
+            <article><h3>Latest Deadline Local</h3><p id="latestDeadlineLocalValue">-</p></article>
+            <article><h3>Latest Deadline UTC</h3><p id="latestDeadlineUtcValue">-</p></article>
+            <article><h3>Latest Deadline Epoch</h3><p id="latestDeadlineEpochValue">-</p></article>
+            <article><h3>Token</h3><p id="tokenSummary">-</p></article>
+            <article><h3>Wallet Token Balance</h3><p id="walletTokenBalance">-</p></article>
+            <article><h3>Airdrop Token Balance</h3><p id="airdropTokenBalance">-</p></article>
+          </div>
+        </section>
+
+        <section class="split-shell">
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Start New Airdrop</h2>
+              </div>
+            </div>
+
+            <form id="startAirdropForm" class="form-grid">
+              <label class="full-width">
+                <span>Merkle Root</span>
+                <input id="startRootInput" type="text" placeholder="0x...">
+              </label>
+              <label>
+                <span>Deadline (local time)</span>
+                <input id="startDeadlineInput" type="datetime-local">
+              </label>
+              <label>
+                <span>Deadline (UTC)</span>
+                <input id="startDeadlineUtcInput" type="text" placeholder="2026-04-10 20:00:00 UTC">
+              </label>
+              <label>
+                <span>Unix Deadline</span>
+                <input id="startDeadlineUnix" type="text" readonly>
+              </label>
+              <div class="full-width">
+                <button type="submit">Start New Airdrop</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Treasury</h2>
+              </div>
+            </div>
+
+            <div class="card-grid">
+              <form id="fundAirdropForm" class="card-form">
+                <h3>Fund Airdrop Contract</h3>
+                <label><span>Amount</span><input id="fundAirdropAmount" type="text" placeholder="100"></label>
+                <button type="submit">Transfer LIB to Airdrop</button>
+              </form>
+
+              <form id="withdrawForm" class="card-form">
+                <h3>Withdraw LIB</h3>
+                <label><span>Recipient</span><input id="withdrawRecipient" type="text" placeholder="0x..."></label>
+                <label><span>Amount</span><input id="withdrawAmount" type="text" placeholder="10"></label>
+                <button type="submit">Withdraw</button>
+              </form>
+
+              <form id="recoverForm" class="card-form">
+                <h3>Recover ERC20</h3>
+                <label><span>ERC20 Address</span><input id="recoverTokenAddress" type="text" placeholder="0x..."></label>
+                <label><span>Recipient</span><input id="recoverRecipient" type="text" placeholder="0x..."></label>
+                <label><span>Amount</span><input id="recoverAmount" type="text" placeholder="5"></label>
+                <button type="submit">Recover Token</button>
+              </form>
+            </div>
+          </section>
+        </section>
+
+        <section class="frame">
+          <div class="panel-title-row">
+            <div>
+              <h2>All Epochs</h2>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Epoch</th>
+                  <th>Merkle Root</th>
+                  <th>Deadline Local</th>
+                  <th>Deadline UTC</th>
+                  <th>Claimed Amount</th>
+                </tr>
+              </thead>
+              <tbody id="epochListBody">
+                <tr><td colspan="5" class="empty-row">No epochs started yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="split-shell">
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Lookup Epoch</h2>
+              </div>
+            </div>
+
+            <form id="epochQueryForm" class="card-form">
+              <label><span>Epoch</span><input id="queryEpochInput" type="number" min="1" placeholder="1"></label>
+              <button type="submit">Fetch Epoch Data</button>
+              <pre id="epochQueryResult" class="result-block">-</pre>
+            </form>
+          </section>
+
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Check Claim Status</h2>
+              </div>
+            </div>
+
+            <form id="claimStatusForm" class="card-form">
+              <label><span>Epoch</span><input id="claimedEpochInput" type="number" min="1" placeholder="1"></label>
+              <label><span>Index</span><input id="claimedIndexInput" type="number" min="0" placeholder="0"></label>
+              <button type="submit">Check Claim Status</button>
+              <pre id="claimStatusResult" class="result-block">-</pre>
+            </form>
+          </section>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="./js/pages/admin.js"></script>
+  </body>
+</html>

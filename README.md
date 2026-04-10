@@ -1,8 +1,8 @@
 # liberdus-airdrop
 
-Epoch-based Merkle airdrop contract and Hardhat test harness for Liberdus.
+Epoch-based Merkle airdrop contract, static frontend, and Hardhat test harness for Liberdus.
 
-This repo currently contains the Solidity contract and local Hardhat tests for the airdrop system. The static claim site is not included yet.
+This repo contains the Solidity contract, local Hardhat tests, and static wallet-connected UIs for claimants and admins against a Hardhat node.
 
 ## Contract Behavior
 
@@ -27,6 +27,63 @@ npm install
 npm run compile
 npm test
 ```
+
+## Static Frontend Pages
+
+The frontend lives in `frontend/` and is served without any frontend framework or build step.
+
+```bash
+npm run node
+npm run deploy:local
+```
+
+Then open one of:
+
+- `http://127.0.0.1:8080/` for the claimant page
+- `http://127.0.0.1:8080/admin.html` for the owner-only admin page
+
+`npm run deploy:local` writes `frontend/config.local.json` with the current local deployment addresses used by the frontend.
+
+Hosted claim rounds are loaded from `frontend/claims/index.json`. Each entry points at a generated `*.merkle.json` artifact. The claimant page scans those rounds for the connected wallet.
+
+## Merkle CLI
+
+Use the CLI generator to turn an offline claims file into a Merkle root plus per-claim proofs:
+
+```bash
+npm run merkle -- ./claims.json
+```
+
+This writes `./claims.merkle.json` by default.
+
+You can also choose a specific output path:
+
+```bash
+npm run merkle -- ./claims.json --out ./epoch-1.merkle.json
+```
+
+To publish multiple claim rounds for the frontend, generate one `*.merkle.json` file per epoch and add each file to `frontend/claims/index.json`.
+
+Optional flags:
+
+- `--decimals 18`
+- `--stdout`
+
+Input files can be either a raw array of claim objects or an object with a top-level `claims` array.
+
+Each claim must contain:
+
+```json
+[
+  {
+    "index": 0,
+    "account": "0x0000000000000000000000000000000000000001",
+    "amount": "100"
+  }
+]
+```
+
+You may also provide `amountRaw` instead of `amount` if your source data is already in token base units.
 
 ## Key Reads
 

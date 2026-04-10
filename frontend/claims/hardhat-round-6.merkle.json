@@ -1,0 +1,65 @@
+{
+  "root": "0x3fef4ff564189128713efd7b45f7bdce8aaa570703f387fba8c4b7dfe0b04b7e",
+  "leafEncoding": [
+    "uint256",
+    "address",
+    "uint256"
+  ],
+  "decimals": 18,
+  "generatedAt": "2026-04-10T01:22:19.355Z",
+  "sourceFile": "hardhat-round-6.claims.json",
+  "claims": [
+    {
+      "index": "0",
+      "account": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      "amount": "12500",
+      "amountRaw": "12500000000000000000000",
+      "proof": [
+        "0xa4068db67cdf37b7e255cb9bb9cbbff13a8c4c61777d3f17974c1c8adc80483e",
+        "0xb8e20b1aef32e0bb74fbe7d24d47c6e38d3f82d3a940afbb939150e475786118"
+      ]
+    },
+    {
+      "index": "1",
+      "account": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      "amount": "9400",
+      "amountRaw": "9400000000000000000000",
+      "proof": [
+        "0x572f3a75410ba091bfbe70e07913867fd3027313c0a684abb5799c6d86fa9c5a",
+        "0xb82f87b454900789a6a9ce9c6df1bcd69076442620bfa54d8b2dc102956b4175",
+        "0xf0eea0d76cf723ff3813d48cb10afa958134b9d2a4005e0d73d29287575a9f8f"
+      ]
+    },
+    {
+      "index": "2",
+      "account": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+      "amount": "7600",
+      "amountRaw": "7600000000000000000000",
+      "proof": [
+        "0x8311fd5d85d39edab1794c2663c37364998a8e30db735513a3e9176e4d8f23c1",
+        "0xb8e20b1aef32e0bb74fbe7d24d47c6e38d3f82d3a940afbb939150e475786118"
+      ]
+    },
+    {
+      "index": "3",
+      "account": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+      "amount": "5200",
+      "amountRaw": "5200000000000000000000",
+      "proof": [
+        "0x0febdf7f7c856a2b4e07b40ff30bd6a265777e957f7305366d8be63588690697",
+        "0xb82f87b454900789a6a9ce9c6df1bcd69076442620bfa54d8b2dc102956b4175",
+        "0xf0eea0d76cf723ff3813d48cb10afa958134b9d2a4005e0d73d29287575a9f8f"
+      ]
+    },
+    {
+      "index": "4",
+      "account": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+      "amount": "3100",
+      "amountRaw": "3100000000000000000000",
+      "proof": [
+        "0x544f2dea5b3c6b497dbee064aae9d2a0c947c5ddfcc349ec3ff34144a31ea860",
+        "0xf0eea0d76cf723ff3813d48cb10afa958134b9d2a4005e0d73d29287575a9f8f"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "rounds": [
+    {
+      "epoch": 2,
+      "file": "./hardhat-round-2.merkle.json"
+    },
+    {
+      "epoch": 3,
+      "file": "./hardhat-round-3.merkle.json"
+    },
+    {
+      "epoch": 4,
+      "file": "./hardhat-round-4.merkle.json"
+    },
+    {
+      "epoch": 5,
+      "file": "./hardhat-round-5.merkle.json"
+    },
+    {
+      "epoch": 6,
+      "file": "./hardhat-round-6.merkle.json"
+    },
+    {
+      "epoch": 7,
+      "file": "./hardhat-round-7.merkle.json"
+    },
+    {
+      "epoch": 8,
+      "file": "./hardhat-round-8.merkle.json"
+    },
+    {
+      "epoch": 9,
+      "file": "./hardhat-round-9.merkle.json"
+    },
+    {
+      "epoch": 10,
+      "file": "./hardhat-round-10.merkle.json"
+    },
+    {
+      "epoch": 11,
+      "file": "./hardhat-round-11.merkle.json"
+    }
+  ]
+}

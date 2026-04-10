@@ -2,5 +2,7 @@ node_modules/
 artifacts/
 cache/
 coverage/
+.vscode/
 .env
 npm-debug.log*
+frontend/config.local.json
