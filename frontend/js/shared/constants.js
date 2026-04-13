@@ -1,18 +1,28 @@
-export const HARDHAT_LOCAL = {
-  chainId: 31337,
-  chainIdHex: "0x7a69",
-  networkName: "Hardhat Local",
-  rpcUrl: "http://127.0.0.1:8545",
-  nativeCurrency: {
-    name: "ETH",
-    symbol: "ETH",
-    decimals: 18,
-  },
-};
+export function toChainIdHex(chainId) {
+  const numericChainId = Number(chainId);
+  if (!Number.isInteger(numericChainId) || numericChainId < 0) {
+    throw new Error("chainId must be a non-negative integer.");
+  }
+
+  return `0x${numericChainId.toString(16)}`;
+}
 
 export const STORAGE_KEY = "liberdus-airdrop-ui-config";
 export const WALLET_SESSION_KEY = "liberdus-airdrop-wallet-session";
 export const UI_ROOT = new URL("../../", import.meta.url);
+export const CHAIN_NAME_BY_ID = {
+  1: "Ethereum",
+  10: "OP Mainnet",
+  56: "BNB Smart Chain",
+  97: "BNB Smart Chain Testnet",
+  137: "Polygon",
+  42161: "Arbitrum One",
+  43114: "Avalanche C-Chain",
+  8453: "Base",
+  11155111: "Sepolia",
+  1337: "Localhost 8545",
+  31337: "Hardhat Local",
+};
 
 export const AIRDROP_ABI = [
   "function owner() view returns (address)",

@@ -1,5 +1,5 @@
 import { ethers } from "./ethers.js";
-import { HARDHAT_LOCAL, WALLET_SESSION_KEY } from "./constants.js";
+import { CHAIN_NAME_BY_ID, WALLET_SESSION_KEY, toChainIdHex } from "./constants.js";
 
 function getInjectedProvider() {
   // Placeholder for future EIP-6963 wallet selection. For now we use the legacy injected provider.
@@ -22,11 +22,41 @@ export function hasWalletSession() {
   return Boolean(getWalletSession());
 }
 
+function resolveChainName(runtime, chainId, networkName) {
+  const numericChainId = Number(chainId);
+  if (!Number.isFinite(numericChainId)) return null;
+  if (runtime?.config?.chainId === numericChainId && runtime?.config?.networkName) {
+    return runtime.config.networkName;
+  }
+
+  if (typeof networkName === "string" && networkName && networkName !== "unknown") {
+    return networkName;
+  }
+
+  return CHAIN_NAME_BY_ID[numericChainId] || null;
+}
+
+function applyNetworkToRuntime(runtime, network) {
+  runtime.chainId = Number(network.chainId);
+  runtime.chainName = resolveChainName(runtime, runtime.chainId, network.name);
+}
+
 export async function ensureProvider(runtime) {
   const injected = getInjectedProvider();
   if (!injected) throw new Error("MetaMask was not detected in this browser.");
   if (!runtime.provider) runtime.provider = new ethers.BrowserProvider(injected);
   return runtime.provider;
+}
+
+export function resetProvider(runtime, nextChainId = null) {
+  runtime.provider = null;
+  runtime.signer = null;
+  if (nextChainId !== null && nextChainId !== undefined) {
+    runtime.chainId = Number(nextChainId);
+    runtime.chainName = resolveChainName(runtime, runtime.chainId, null);
+    return;
+  }
+  runtime.chainName = null;
 }
 
 export async function connectWallet(runtime) {
@@ -35,7 +65,7 @@ export async function connectWallet(runtime) {
   runtime.signer = await provider.getSigner();
   runtime.account = await runtime.signer.getAddress();
   const network = await provider.getNetwork();
-  runtime.chainId = Number(network.chainId);
+  applyNetworkToRuntime(runtime, network);
   saveWalletSession();
   return runtime.account;
 }
@@ -47,9 +77,10 @@ export async function disconnectWallet(runtime) {
 
   if (runtime.provider) {
     const network = await runtime.provider.getNetwork();
-    runtime.chainId = Number(network.chainId);
+    applyNetworkToRuntime(runtime, network);
   } else {
     runtime.chainId = null;
+    runtime.chainName = null;
   }
 }
 
@@ -59,6 +90,7 @@ export async function syncWalletState(runtime) {
     runtime.account = null;
     runtime.signer = null;
     runtime.chainId = null;
+    runtime.chainName = null;
     runtime.provider = null;
     return;
   }
@@ -66,7 +98,7 @@ export async function syncWalletState(runtime) {
   const provider = await ensureProvider(runtime);
   const network = await provider.getNetwork();
 
-  runtime.chainId = Number(network.chainId);
+  applyNetworkToRuntime(runtime, network);
 
   if (!hasWalletSession()) {
     runtime.account = null;
@@ -86,15 +118,21 @@ export async function syncWalletState(runtime) {
 export async function addConfiguredNetwork(config) {
   const injected = getInjectedProvider();
   if (!injected) throw new Error("MetaMask was not detected.");
+  if (!Number.isInteger(Number(config.chainId))) throw new Error("Configured chainId is required.");
+  if (!config.networkName || !config.rpcUrl || !config.nativeCurrency) {
+    throw new Error("Configured networkName, rpcUrl, and nativeCurrency are required.");
+  }
+
+  const chainIdHex = toChainIdHex(config.chainId);
 
   await injected.request({
     method: "wallet_addEthereumChain",
     params: [
       {
-        chainId: config.chainIdHex || HARDHAT_LOCAL.chainIdHex,
-        chainName: config.networkName || HARDHAT_LOCAL.networkName,
-        rpcUrls: [config.rpcUrl || HARDHAT_LOCAL.rpcUrl],
-        nativeCurrency: config.nativeCurrency || HARDHAT_LOCAL.nativeCurrency,
+        chainId: chainIdHex,
+        chainName: config.networkName,
+        rpcUrls: [config.rpcUrl],
+        nativeCurrency: config.nativeCurrency,
       },
     ],
   });
@@ -103,11 +141,14 @@ export async function addConfiguredNetwork(config) {
 export async function switchConfiguredNetwork(config) {
   const injected = getInjectedProvider();
   if (!injected) throw new Error("MetaMask was not detected.");
+  if (!Number.isInteger(Number(config.chainId))) throw new Error("Configured chainId is required.");
+
+  const chainIdHex = toChainIdHex(config.chainId);
 
   try {
     await injected.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: config.chainIdHex || HARDHAT_LOCAL.chainIdHex }],
+      params: [{ chainId: chainIdHex }],
     });
   } catch (error) {
     if (error?.code === 4902) {
@@ -128,8 +169,8 @@ export function bindWalletEvents({ onAccountsChanged, onChainChanged }) {
     if (onAccountsChanged) await onAccountsChanged();
   };
 
-  const handleChainChanged = async () => {
-    if (onChainChanged) await onChainChanged();
+  const handleChainChanged = async (chainId) => {
+    if (onChainChanged) await onChainChanged(chainId);
   };
 
   injected.on("accountsChanged", handleAccountsChanged);

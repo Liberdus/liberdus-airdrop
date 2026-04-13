@@ -26,6 +26,19 @@ function extractErrorCode(error) {
   return null;
 }
 
+function isNetworkChangedError(error) {
+  const candidates = [
+    error?.message,
+    error?.shortMessage,
+    error?.reason,
+    error?.data?.message,
+    error?.data?.data?.message,
+    error?.cause?.message,
+  ];
+
+  return candidates.some((candidate) => typeof candidate === "string" && /network changed:\s*\d+\s*=>\s*\d+/i.test(candidate));
+}
+
 function isHexData(value) {
   return typeof value === "string" && /^0x[0-9a-fA-F]*$/.test(value) && value.length >= 10;
 }
@@ -271,6 +284,10 @@ export function bindGlobalErrorHandlers(reportError) {
   });
 
   window.addEventListener("unhandledrejection", (event) => {
+    if (isNetworkChangedError(event.reason)) {
+      event.preventDefault();
+      return;
+    }
     reportError(event.reason ?? new Error("Unhandled promise rejection."), "Unhandled rejection");
   });
 }

@@ -1,5 +1,4 @@
 import { ethers } from "../shared/ethers.js";
-import { HARDHAT_LOCAL } from "../shared/constants.js";
 import { loadUiConfig } from "../shared/config.js";
 import { getContracts, fetchDashboardSnapshot } from "../shared/contracts.js";
 import { createErrorReporter, bindGlobalErrorHandlers, formatUiError } from "../shared/errors.js";
@@ -15,6 +14,7 @@ import {
   ensureProvider,
   connectWallet,
   disconnectWallet,
+  resetProvider,
   syncWalletState,
   bindWalletEvents,
 } from "../shared/wallet.js";
@@ -25,9 +25,10 @@ const runtime = {
   signer: null,
   account: null,
   chainId: null,
+  chainName: null,
   owner: null,
   currentEpoch: 0,
-  config: { ...HARDHAT_LOCAL, tokenAddress: "", dustTokenAddress: "", airdropAddress: "", claimsManifestPath: "./claims/index.json" },
+  config: { chainId: null, networkName: "", rpcUrl: "", nativeCurrency: null, tokenAddress: "", dustTokenAddress: "", airdropAddress: "", claimsManifestPath: "./claims/index.json" },
   configSource: "template",
   tokenDecimals: 18,
   tokenSymbol: "LIB",
@@ -41,6 +42,8 @@ const els = {
   connectButton: document.getElementById("connectButton"),
   walletMenu: document.getElementById("walletMenu"),
   walletMenuAddress: document.getElementById("walletMenuAddress"),
+  walletMenuChainId: document.getElementById("walletMenuChainId"),
+  adminPageButton: document.getElementById("adminPageButton"),
   copyWalletAddressButton: document.getElementById("copyWalletAddressButton"),
   disconnectButton: document.getElementById("disconnectButton"),
   roundList: document.getElementById("roundList"),
@@ -144,6 +147,13 @@ function syncWalletButton() {
   els.connectButton.textContent = label;
   els.walletMenuAddress.textContent = runtime.account ? formatAddressShort(runtime.account) : "-";
   els.walletMenuAddress.title = runtime.account || "";
+  els.walletMenuChainId.textContent = runtime.chainId == null ? "-" : String(runtime.chainId);
+  const showAdminLink = Boolean(
+    runtime.account
+    && runtime.owner
+    && normalizeAddress(runtime.account) === normalizeAddress(runtime.owner),
+  );
+  els.adminPageButton.hidden = !showAdminLink;
   setWalletMenuOpen(false);
 }
 
@@ -305,7 +315,6 @@ async function refreshRounds() {
 
 async function refreshPage() {
   await syncWalletState(runtime);
-  syncWalletButton();
 
   try {
     const snapshot = await fetchDashboardSnapshot({
@@ -323,6 +332,7 @@ async function refreshPage() {
     runtime.currentEpoch = 0;
   }
 
+  syncWalletButton();
   await refreshRounds();
 }
 
@@ -394,12 +404,17 @@ function bindEvents() {
     }
   });
 
+  els.adminPageButton?.addEventListener("click", () => {
+    window.location.href = "./admin.html";
+  });
+
   bindWalletEvents({
     onAccountsChanged: async () => {
       await refreshPage();
       clearMessage();
     },
-    onChainChanged: async () => {
+    onChainChanged: async (chainId) => {
+      resetProvider(runtime, chainId ? Number.parseInt(chainId, 16) : null);
       await refreshPage();
       clearMessage();
     },

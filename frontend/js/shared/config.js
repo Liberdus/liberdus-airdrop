@@ -1,4 +1,4 @@
-import { HARDHAT_LOCAL, STORAGE_KEY, UI_ROOT } from "./constants.js";
+import { STORAGE_KEY, UI_ROOT, toChainIdHex } from "./constants.js";
 import { normalizeAddress } from "./format.js";
 
 export async function loadUiConfig() {
@@ -24,7 +24,6 @@ export async function loadUiConfig() {
   const overrides = savedOverrides ? JSON.parse(savedOverrides) : {};
 
   const config = {
-    ...HARDHAT_LOCAL,
     claimsManifestPath: "./claims/index.json",
     ...loaded,
     ...overrides,
@@ -33,6 +32,16 @@ export async function loadUiConfig() {
     airdropAddress: normalizeAddress(overrides.airdropAddress || loaded.airdropAddress || ""),
     claimsManifestPath: String(overrides.claimsManifestPath || loaded.claimsManifestPath || "./claims/index.json"),
   };
+
+  config.chainId = Number(config.chainId);
+  if (!Number.isInteger(config.chainId) || config.chainId < 0) {
+    throw new Error("UI config must define a valid numeric chainId.");
+  }
+  config.chainIdHex = toChainIdHex(config.chainId);
+
+  if (!config.networkName || !config.rpcUrl || !config.nativeCurrency) {
+    throw new Error("UI config must define networkName, rpcUrl, and nativeCurrency.");
+  }
 
   return {
     config,

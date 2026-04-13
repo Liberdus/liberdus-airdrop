@@ -47,29 +47,37 @@ export async function fetchDashboardSnapshot({ config, provider, account }) {
   }
 
   if (token) {
-    const [symbol, decimals] = await Promise.all([token.symbol(), token.decimals()]);
-    snapshot.tokenSymbol = symbol;
-    snapshot.tokenDecimals = Number(decimals);
+    try {
+      const [symbol, decimals] = await Promise.all([token.symbol(), token.decimals()]);
+      snapshot.tokenSymbol = symbol;
+      snapshot.tokenDecimals = Number(decimals);
 
-    if (account) {
-      snapshot.walletTokenBalance = await token.balanceOf(account);
-    }
+      if (account) {
+        snapshot.walletTokenBalance = await token.balanceOf(account);
+      }
 
-    if (airdropAddress) {
-      snapshot.airdropTokenBalance = await token.balanceOf(airdropAddress);
+      if (airdropAddress) {
+        snapshot.airdropTokenBalance = await token.balanceOf(airdropAddress);
+      }
+    } catch {
+      // Keep owner/currentEpoch available even if token metadata or balances fail.
     }
   }
 
   if (dustToken && account) {
-    const [symbol, decimals, balance] = await Promise.all([
-      dustToken.symbol(),
-      dustToken.decimals(),
-      dustToken.balanceOf(account),
-    ]);
+    try {
+      const [symbol, decimals, balance] = await Promise.all([
+        dustToken.symbol(),
+        dustToken.decimals(),
+        dustToken.balanceOf(account),
+      ]);
 
-    snapshot.dustSymbol = symbol;
-    snapshot.dustDecimals = Number(decimals);
-    snapshot.walletDustBalance = balance;
+      snapshot.dustSymbol = symbol;
+      snapshot.dustDecimals = Number(decimals);
+      snapshot.walletDustBalance = balance;
+    } catch {
+      // Dust token data is non-critical for the dashboard.
+    }
   }
 
   return snapshot;

@@ -1,6 +1,10 @@
 {
   "rounds": [
     {
+      "epoch": 1,
+      "file": "./hardhat-round-2.claims.json"
+    },
+    {
       "epoch": 2,
       "file": "./hardhat-round-2.claims.json"
     },

@@ -380,6 +380,33 @@ select {
   margin-bottom: 14px;
 }
 
+.wallet-popout-meta {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.wallet-popout-meta p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.84rem;
+}
+
+.wallet-popout-meta span {
+  color: var(--muted);
+}
+
+.wallet-popout-meta strong {
+  font-weight: 600;
+  color: #fff0d3;
+  text-align: right;
+}
+
 .wallet-popout-address {
   margin: 0;
   flex: 1 1 auto;
@@ -401,6 +428,10 @@ select {
 .wallet-disconnect-button {
   width: 100%;
   justify-content: center;
+}
+
+.wallet-popout .wallet-disconnect-button + .wallet-disconnect-button {
+  margin-top: 10px;
 }
 
 .claim-card-header {
@@ -701,7 +732,9 @@ button {
   justify-content: center;
   position: relative;
   overflow: hidden;
+  height: 54px;
   min-height: 54px;
+  max-height: 54px;
   border: 0;
   border-radius: 16px;
   padding: 13px 18px;
@@ -742,6 +775,12 @@ button.secondary {
   color: var(--text);
   background: linear-gradient(135deg, rgba(50, 82, 182, 0.92), rgba(15, 37, 103, 0.98));
   box-shadow: 0 10px 24px rgba(7, 21, 66, 0.42);
+}
+
+button.danger {
+  color: #fff4f4;
+  background: linear-gradient(135deg, #d64a4a 0%, #b31f2f 54%, #7b1020 100%);
+  box-shadow: 0 10px 24px rgba(123, 16, 32, 0.36);
 }
 
 button.ghost {
@@ -888,6 +927,24 @@ label span {
   text-transform: uppercase;
 }
 
+.form-warning {
+  margin: -2px 0 2px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 189, 118, 0.32);
+  border-radius: 16px;
+  color: #ffe3b7;
+  font-family: var(--mono);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  background: rgba(255, 189, 118, 0.08);
+}
+
+.form-warning[data-tone="info"] {
+  border-color: rgba(121, 244, 188, 0.28);
+  color: #ddffef;
+  background: rgba(121, 244, 188, 0.08);
+}
+
 input,
 textarea,
 select {
@@ -976,6 +1033,16 @@ tfoot td {
 
 .table-wrap {
   overflow-x: auto;
+}
+
+.deadline-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+}
+
+.deadline-stack span {
+  color: var(--muted);
 }
 
 table {

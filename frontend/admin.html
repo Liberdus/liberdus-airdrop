@@ -49,6 +49,10 @@
                 <p id="walletMenuAddress" class="wallet-popout-address">-</p>
                 <button id="copyWalletAddressButton" type="button" class="ghost wallet-copy-button">Copy</button>
               </div>
+              <div class="wallet-popout-meta">
+                <p><span>Chain ID</span><strong id="walletMenuChainId">-</strong></p>
+              </div>
+              <button id="claimPageButton" type="button" class="ghost wallet-disconnect-button">Open Claim Page</button>
               <button id="disconnectButton" type="button" class="ghost wallet-disconnect-button">Disconnect</button>
             </div>
           </div>
@@ -116,6 +120,7 @@
                 <span>Merkle Root</span>
                 <input id="startRootInput" type="text" placeholder="Upload a claims JSON file" readonly>
               </label>
+              <p id="startRootWarning" class="form-warning full-width" hidden></p>
               <label>
                 <span>Deadline (local time)</span>
                 <input id="startDeadlineInput" type="datetime-local">
@@ -129,7 +134,7 @@
                 <input id="startDeadlineUnix" type="text" readonly>
               </label>
               <div class="full-width button-row">
-                <button type="submit">Start New Airdrop</button>
+                <button id="startAirdropButton" type="submit">Start New Airdrop</button>
                 <button id="clearUploadedButton" type="button" class="ghost" disabled>Clear File</button>
               </div>
             </form>
@@ -187,7 +192,7 @@
               </label>
               <div class="full-width button-row">
                 <button type="submit">Update Deadline</button>
-                <button id="disableEpochButton" type="button" class="secondary">Disable Epoch</button>
+                <button id="disableEpochButton" type="button" class="danger">Disable Epoch</button>
               </div>
             </form>
 
@@ -235,8 +240,8 @@
                 <tr>
                   <th>Epoch</th>
                   <th>Merkle Root</th>
-                  <th>Deadline Local</th>
-                  <th>Deadline UTC</th>
+                  <th>Deadline</th>
+                  <th>Status</th>
                   <th>Claimed / Total</th>
                 </tr>
               </thead>
