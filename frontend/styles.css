@@ -291,6 +291,7 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
 .page-footer-copy {
@@ -304,49 +305,40 @@ select {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 10px 14px;
   flex-wrap: wrap;
 }
 
-.footer-link-button,
 .footer-link-anchor {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 0 16px;
-  border-radius: 14px;
+  gap: 6px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   color: var(--accent-strong);
-  font-family: var(--display);
-  font-size: 0.92rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-decoration: none;
-  background: rgba(251, 175, 64, 0.09);
-  border: 1px solid rgba(251, 175, 64, 0.22);
+  font-family: var(--mono);
+  font-size: 0.84rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.4;
+  text-decoration: underline;
+  background: transparent;
   box-shadow: none;
-}
-
-.footer-link-button {
-  height: auto;
-  min-width: 0;
-  max-height: none;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.footer-link-button img {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-}
-
-.footer-link-button:hover,
 .footer-link-anchor:hover {
-  transform: translateY(-1px);
-  border-color: rgba(251, 175, 64, 0.42);
-  background: rgba(251, 175, 64, 0.16);
+  color: #ffe9c7;
   box-shadow: none;
+}
+
+.footer-link-action img {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
 }
 
 .frame {
@@ -1582,7 +1574,8 @@ code {
     justify-items: stretch;
   }
 
-  .claim-topbar-actions button,
+  .claim-topbar-actions > button,
+  .claim-topbar-actions > .wallet-menu-shell > button,
   .claim-topbar-actions .badge,
   .claim-card-wallet button,
   .claim-card-wallet .badge {
@@ -1590,7 +1583,7 @@ code {
     justify-content: center;
   }
 
-  .page-header .claim-topbar-actions button {
+  .page-header .wallet-trigger {
     width: auto;
   }
 
@@ -1647,18 +1640,13 @@ code {
 
   .page-footer-inner {
     width: min(100vw - 18px, 1440px);
-    flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
+    justify-content: space-between;
   }
 
   .page-footer-links {
-    width: 100%;
-    justify-content: stretch;
-  }
-
-  .footer-link-button,
-  .footer-link-anchor {
-    width: 100%;
+    width: auto;
+    justify-content: flex-end;
   }
 
   .page-circuit {

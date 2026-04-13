@@ -82,6 +82,7 @@ function applyNetworkToRuntime(runtime, network) {
 }
 
 function guessLegacyWalletName(provider) {
+  if (provider?.isPhantom) return "Phantom";
   if (provider?.isRabby) return "Rabby";
   if (provider?.isCoinbaseWallet) return "Coinbase Wallet";
   if (provider?.isMetaMask) return "MetaMask";
@@ -92,6 +93,7 @@ function guessLegacyWalletName(provider) {
 }
 
 function guessLegacyWalletRdns(provider) {
+  if (provider?.isPhantom) return "app.phantom";
   if (provider?.isRabby) return "io.rabby";
   if (provider?.isCoinbaseWallet) return "com.coinbase.wallet";
   if (provider?.isMetaMask) return "io.metamask";
@@ -283,6 +285,7 @@ function applyActiveWallet(runtime, wallet) {
   activeInjectedProvider = nextInjectedProvider;
   runtime.selectedWalletId = wallet?.id || null;
   runtime.selectedWalletName = wallet?.info?.name || null;
+  runtime.selectedWalletRdns = wallet?.info?.rdns || null;
   runtime.injectedProvider = nextInjectedProvider;
 
   if (runtime.providerSource !== nextInjectedProvider) {

@@ -32,6 +32,7 @@ const runtime = {
   injectedProvider: null,
   selectedWalletId: null,
   selectedWalletName: null,
+  selectedWalletRdns: null,
   owner: null,
   currentEpoch: 0,
   config: { chainId: null, networkName: "", rpcUrl: "", nativeCurrency: null, tokenAddress: "", dustTokenAddress: "", airdropAddress: "", claimsManifestPath: "./claims/index.json" },
@@ -54,7 +55,7 @@ const els = {
   copyWalletAddressButton: document.getElementById("copyWalletAddressButton"),
   disconnectButton: document.getElementById("disconnectButton"),
   roundList: document.getElementById("roundList"),
-  addTokenButton: document.getElementById("addTokenButton"),
+  addTokenLink: document.getElementById("addTokenLink"),
   tokenExplorerLink: document.getElementById("tokenExplorerLink"),
   claimToast: document.getElementById("claimToast"),
   claimToastMessage: document.getElementById("claimToastMessage"),
@@ -182,6 +183,27 @@ async function addTokenToMetaMask() {
   logger.log("Token import was closed.");
 }
 
+function isMetaMaskWalletSelected() {
+  const walletName = String(runtime.selectedWalletName || "").toLowerCase();
+  const walletRdns = String(runtime.selectedWalletRdns || "").toLowerCase();
+  const provider = runtime.injectedProvider;
+
+  if (
+    walletRdns.includes("phantom")
+    || provider?.isPhantom
+    || provider?.isBraveWallet
+    || provider?.isCoinbaseWallet
+    || provider?.isRabby
+  ) {
+    return false;
+  }
+
+  if (walletRdns) return walletRdns.includes("metamask");
+  if (walletName) return walletName.includes("metamask");
+
+  return Boolean(provider?.isMetaMask);
+}
+
 function syncWalletButton() {
   const label = runtime.account
     ? formatAddressShort(runtime.account)
@@ -205,7 +227,13 @@ function syncWalletButton() {
 
 function updateFooterLinks() {
   const hasTokenAddress = Boolean(runtime.config.tokenAddress);
-  els.addTokenButton.disabled = !hasTokenAddress;
+  const showAddToWallet = hasTokenAddress && runtime.account && isMetaMaskWalletSelected();
+  els.addTokenLink.hidden = !showAddToWallet;
+  if (showAddToWallet) {
+    els.addTokenLink.href = "#";
+  } else {
+    els.addTokenLink.removeAttribute("href");
+  }
 
   const explorerBaseUrl = String(runtime.config.explorerBaseUrl || "").trim().replace(/\/+$/, "");
   if (explorerBaseUrl && hasTokenAddress) {
@@ -485,7 +513,8 @@ function bindEvents() {
     window.location.href = "./admin.html";
   });
 
-  els.addTokenButton?.addEventListener("click", async () => {
+  els.addTokenLink?.addEventListener("click", async (event) => {
+    event.preventDefault();
     try {
       await addTokenToMetaMask();
     } catch (error) {
