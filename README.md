@@ -28,6 +28,42 @@ npm run compile
 npm test
 ```
 
+## BSC Deployment
+
+Create a `.env` file from `.env.example` and fill in:
+
+```dotenv
+DEPLOYER_PRIVATE_KEY=
+BSC_TESTNET_RPC_URL=
+BSC_MAINNET_RPC_URL=
+BSC_TESTNET_TOKEN_ADDRESS=
+BSC_MAINNET_TOKEN_ADDRESS=
+BSCSCAN_API_KEY=
+DEPLOY_CONFIRMATIONS=5
+```
+
+Then deploy:
+
+```bash
+npm run deploy:airdrop:bsc:testnet
+```
+
+or for mainnet later:
+
+```bash
+npm run deploy:airdrop:bsc:mainnet
+```
+
+Each deployment writes a reusable record to `deployments/<network>/EpochMerkleAirdrop.json`.
+If `BSCSCAN_API_KEY` is set, the deploy script also verifies automatically on BscScan.
+
+If verification needs to be retried separately:
+
+```bash
+npm run verify:airdrop:bsc:testnet
+npm run verify:airdrop:bsc:mainnet
+```
+
 ## Static Frontend
 
 The frontend lives in `frontend/` and is served without any frontend framework or build step.

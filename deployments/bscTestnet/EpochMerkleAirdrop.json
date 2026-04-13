@@ -1,0 +1,14 @@
+{
+  "contractName": "EpochMerkleAirdrop",
+  "network": "bscTestnet",
+  "chainId": 97,
+  "deployer": "0x63bC72B99D3b5bc1a97bD6e843b669B65a690a66",
+  "tokenAddress": "0x48463C89254d001Bdc6B5d2af92d531E60FB4f72",
+  "airdropAddress": "0x822C39eFe9055593418071a80552760282fB1B71",
+  "constructorArguments": [
+    "0x48463C89254d001Bdc6B5d2af92d531E60FB4f72"
+  ],
+  "deploymentTxHash": "0xdfd339664c67f04cb53cc9103bc654868fe778af3b689223a9307b7b53d846ed",
+  "deployedAt": "2026-04-13T23:07:58.684Z",
+  "explorerUrl": "https://testnet.bscscan.com/address/0x822C39eFe9055593418071a80552760282fB1B71"
+}
