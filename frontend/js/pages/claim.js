@@ -17,15 +17,21 @@ import {
   resetProvider,
   syncWalletState,
   bindWalletEvents,
+  getAvailableWallets,
 } from "../shared/wallet.js";
+import { promptForWalletSelection } from "../shared/wallet-picker.js";
 import { loadClaimCatalog, fetchClaimSource, findClaimEntry } from "../shared/claims.js";
 
 const runtime = {
   provider: null,
+  providerSource: null,
   signer: null,
   account: null,
   chainId: null,
   chainName: null,
+  injectedProvider: null,
+  selectedWalletId: null,
+  selectedWalletName: null,
   owner: null,
   currentEpoch: 0,
   config: { chainId: null, networkName: "", rpcUrl: "", nativeCurrency: null, tokenAddress: "", dustTokenAddress: "", airdropAddress: "", claimsManifestPath: "./claims/index.json" },
@@ -34,6 +40,7 @@ const runtime = {
   tokenSymbol: "LIB",
   claimCatalog: null,
   rounds: [],
+  isConnectingWallet: false,
   noticeTimerId: null,
 };
 
@@ -93,6 +100,7 @@ function clearMessage() {
 
 const logger = { log: setMessage, clear: clearMessage };
 const reportError = createErrorReporter(logger.log, () => runtime);
+let pageInitPromise = Promise.resolve();
 
 function updateToastOffset() {
   if (!els.claimHeader) return;
@@ -145,7 +153,8 @@ async function copyWalletAddress() {
 }
 
 async function addTokenToMetaMask() {
-  if (!window.ethereum?.request) {
+  const injected = runtime.injectedProvider || window.ethereum;
+  if (!injected?.request) {
     throw new Error("MetaMask was not detected in this browser.");
   }
 
@@ -153,7 +162,7 @@ async function addTokenToMetaMask() {
     throw new Error("Token address is not configured.");
   }
 
-  const wasAdded = await window.ethereum.request({
+  const wasAdded = await injected.request({
     method: "wallet_watchAsset",
     params: {
       type: "ERC20",
@@ -174,8 +183,14 @@ async function addTokenToMetaMask() {
 }
 
 function syncWalletButton() {
-  const label = runtime.account ? formatAddressShort(runtime.account) : "Connect Wallet";
+  const label = runtime.account
+    ? formatAddressShort(runtime.account)
+    : runtime.isConnectingWallet
+      ? "Connecting..."
+      : "Connect Wallet";
   els.connectButton.textContent = label;
+  els.connectButton.disabled = runtime.isConnectingWallet;
+  els.connectButton.setAttribute("aria-busy", runtime.isConnectingWallet ? "true" : "false");
   els.walletMenuAddress.textContent = runtime.account ? formatAddressShort(runtime.account) : "-";
   els.walletMenuAddress.title = runtime.account || "";
   els.walletMenuChainId.textContent = runtime.chainId == null ? "-" : String(runtime.chainId);
@@ -424,10 +439,26 @@ function bindEvents() {
     }
 
     try {
-      await connectWallet(runtime);
-      await refreshPage();
+      const wallets = await getAvailableWallets();
+      const selectedWalletId = await promptForWalletSelection({
+        wallets,
+        selectedWalletId: runtime.selectedWalletId,
+        title: "Select Wallet",
+      });
+
+      if (!selectedWalletId) return;
+
+      runtime.isConnectingWallet = true;
+      syncWalletButton();
+      await connectWallet(runtime, selectedWalletId);
+      runtime.isConnectingWallet = false;
+      syncWalletButton();
       logger.log("Wallet connected.", "success");
+      await pageInitPromise;
+      await refreshPage();
     } catch (error) {
+      runtime.isConnectingWallet = false;
+      syncWalletButton();
       reportError(error, "Connect wallet");
     }
   });
@@ -488,19 +519,25 @@ function bindEvents() {
 }
 
 async function init() {
-  try {
-    updateToastOffset();
-    const loaded = await loadUiConfig();
-    runtime.config = loaded.config;
-    runtime.configSource = loaded.source;
-    await ensureProvider(runtime).catch(() => null);
-    runtime.claimCatalog = await loadClaimCatalog(runtime.config.claimsManifestPath);
-    await refreshPage();
-  } catch (error) {
-    reportError(error, "Initialize claimant page");
-  }
-
+  renderRoundList();
   bindEvents();
+  updateToastOffset();
+
+  pageInitPromise = (async () => {
+    updateToastOffset();
+    try {
+      const loaded = await loadUiConfig();
+      runtime.config = loaded.config;
+      runtime.configSource = loaded.source;
+      await ensureProvider(runtime).catch(() => null);
+      runtime.claimCatalog = await loadClaimCatalog(runtime.config.claimsManifestPath);
+      await refreshPage();
+    } catch (error) {
+      reportError(error, "Initialize claimant page");
+    }
+  })();
+
+  await pageInitPromise;
   updateToastOffset();
 }
 

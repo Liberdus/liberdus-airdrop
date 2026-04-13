@@ -248,11 +248,11 @@ function formatMessagePatternError(message, context, runtime) {
 export function formatUiError(error, context = "Action", runtime = {}) {
   const code = extractErrorCode(error);
   if (code === 4001) {
-    return `${context}: request rejected in MetaMask.`;
+    return `${context}: request rejected in the wallet.`;
   }
 
   if (code === -32002) {
-    return `${context}: MetaMask already has a pending request.`;
+    return `${context}: the wallet already has a pending request.`;
   }
 
   const decoded = decodeKnownError(error);

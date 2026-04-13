@@ -513,6 +513,160 @@ select {
   margin-top: 10px;
 }
 
+.wallet-picker-open {
+  overflow: hidden;
+}
+
+.wallet-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(3, 10, 32, 0.74);
+  backdrop-filter: blur(16px);
+}
+
+.wallet-picker-dialog {
+  width: min(540px, 100%);
+  max-height: min(720px, calc(100vh - 36px));
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid rgba(251, 175, 64, 0.22);
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 28%),
+    linear-gradient(180deg, rgba(12, 28, 79, 0.98), rgba(5, 15, 47, 0.99));
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+}
+
+.wallet-picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.wallet-picker-close {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 999px;
+  box-shadow: none;
+}
+
+.wallet-picker-list {
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+}
+
+.wallet-picker-option {
+  width: 100%;
+  max-height: none;
+  height: auto;
+  min-height: 88px;
+  justify-content: flex-start;
+  gap: 14px;
+  padding: 18px;
+  color: var(--text);
+  text-align: left;
+  white-space: normal;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 38%),
+    linear-gradient(180deg, rgba(13, 30, 82, 0.92), rgba(6, 17, 52, 0.96));
+  border: 1px solid rgba(251, 175, 64, 0.18);
+  box-shadow: none;
+}
+
+.wallet-picker-option:hover,
+.wallet-picker-option:focus-visible {
+  border-color: rgba(251, 175, 64, 0.4);
+  box-shadow: 0 0 0 4px rgba(251, 175, 64, 0.08);
+}
+
+.wallet-picker-icon-shell {
+  position: relative;
+  width: 50px;
+  min-width: 50px;
+  height: 50px;
+  min-height: 50px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(251, 175, 64, 0.18);
+  background: rgba(251, 175, 64, 0.08);
+}
+
+.wallet-picker-icon,
+.wallet-picker-icon-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.wallet-picker-icon {
+  object-fit: cover;
+}
+
+.wallet-picker-icon-fallback {
+  color: #fff0d3;
+  font-family: var(--display);
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+}
+
+.wallet-picker-copy {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+}
+
+.wallet-picker-name {
+  color: #fff6df;
+  font-family: var(--display);
+  font-size: 1.06rem;
+  font-weight: 700;
+}
+
+.wallet-picker-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: #0d2213;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  background: rgba(121, 244, 188, 0.92);
+}
+
+.wallet-picker-empty {
+  padding: 18px;
+  border: 1px dashed rgba(251, 175, 64, 0.2);
+  border-radius: 20px;
+  background: rgba(251, 175, 64, 0.05);
+}
+
+.wallet-picker-empty p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.wallet-picker-empty p + p {
+  margin-top: 10px;
+}
+
+.wallet-picker-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .claim-card-header {
   display: flex;
   align-items: flex-start;
@@ -1341,7 +1495,7 @@ code {
 
 @media (max-width: 780px) {
   .toast-stack {
-    top: 14px;
+    top: 90px;
     right: 10px;
     left: 10px;
   }
@@ -1445,6 +1599,20 @@ code {
     left: auto;
     width: min(320px, calc(100vw - 20px));
     max-width: calc(100vw - 20px);
+  }
+
+  .wallet-picker {
+    padding: 12px;
+  }
+
+  .wallet-picker-dialog {
+    padding: 18px;
+    border-radius: 24px;
+  }
+
+  .wallet-picker-option {
+    min-height: 82px;
+    padding: 16px;
   }
 
   .brand-logo {

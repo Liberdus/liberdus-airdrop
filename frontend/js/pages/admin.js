@@ -24,16 +24,22 @@ import {
   resetProvider,
   syncWalletState,
   bindWalletEvents,
+  getAvailableWallets,
 } from "../shared/wallet.js";
+import { promptForWalletSelection } from "../shared/wallet-picker.js";
 import { loadClaimCatalog, fetchClaimSource } from "../shared/claims.js";
 import { buildClaimRound } from "../shared/merkle.js";
 
 const runtime = {
   provider: null,
+  providerSource: null,
   signer: null,
   account: null,
   chainId: null,
   chainName: null,
+  injectedProvider: null,
+  selectedWalletId: null,
+  selectedWalletName: null,
   owner: null,
   currentEpoch: 0,
   epochRows: [],
@@ -47,6 +53,7 @@ const runtime = {
   tokenSymbol: "LIB",
   chainTimestamp: 0,
   startRequiresNewUpload: false,
+  isConnectingWallet: false,
   noticeTimerId: null,
 };
 
@@ -152,6 +159,7 @@ function clearMessage() {
 
 const logger = { log: setMessage, clear: clearMessage };
 const reportError = createErrorReporter(logger.log, () => runtime);
+let pageInitPromise = Promise.resolve();
 
 function updateToastOffset() {
   if (!els.adminHeader) return;
@@ -292,8 +300,14 @@ async function copyWalletAddress() {
 }
 
 function syncWalletButton() {
-  const label = runtime.account ? formatAddressShort(runtime.account) : "Connect Wallet";
+  const label = runtime.account
+    ? formatAddressShort(runtime.account)
+    : runtime.isConnectingWallet
+      ? "Connecting..."
+      : "Connect Wallet";
   els.connectButton.textContent = label;
+  els.connectButton.disabled = runtime.isConnectingWallet;
+  els.connectButton.setAttribute("aria-busy", runtime.isConnectingWallet ? "true" : "false");
   els.walletMenuAddress.textContent = runtime.account ? formatAddressShort(runtime.account) : "-";
   els.walletMenuAddress.title = runtime.account || "";
   els.walletMenuChainId.textContent = runtime.chainId == null ? "-" : String(runtime.chainId);
@@ -515,9 +529,9 @@ function applyOwnerGate() {
   els.ownerAddress.textContent = runtime.owner || "-";
   els.connectedAccount.textContent = runtime.account || "No wallet connected";
 
-  if (!window.ethereum) {
-    els.accountRole.textContent = "MetaMask missing";
-    els.adminGateMessage.textContent = "Install MetaMask to manage the airdrop.";
+  if (!runtime.provider) {
+    els.accountRole.textContent = "Wallet missing";
+    els.adminGateMessage.textContent = "Install a compatible browser wallet to manage the airdrop.";
     els.adminShell.hidden = true;
     return;
   }
@@ -531,7 +545,7 @@ function applyOwnerGate() {
 
   if (!isReadyChain()) {
     els.accountRole.textContent = "Wrong network";
-    els.adminGateMessage.textContent = "Switch MetaMask to the configured network to manage the airdrop.";
+    els.adminGateMessage.textContent = "Switch the connected wallet to the configured network to manage the airdrop.";
     els.adminShell.hidden = true;
     return;
   }
@@ -672,10 +686,26 @@ function bindEvents() {
     }
 
     try {
-      await connectWallet(runtime);
-      await refreshPage();
+      const wallets = await getAvailableWallets();
+      const selectedWalletId = await promptForWalletSelection({
+        wallets,
+        selectedWalletId: runtime.selectedWalletId,
+        title: "Select Wallet",
+      });
+
+      if (!selectedWalletId) return;
+
+      runtime.isConnectingWallet = true;
+      syncWalletButton();
+      await connectWallet(runtime, selectedWalletId);
+      runtime.isConnectingWallet = false;
+      syncWalletButton();
       logger.log("Wallet connected.", "success");
+      await pageInitPromise;
+      await refreshPage();
     } catch (error) {
+      runtime.isConnectingWallet = false;
+      syncWalletButton();
       reportError(error, "Connect wallet");
     }
   });
@@ -977,18 +1007,23 @@ function bindEvents() {
 }
 
 async function init() {
-  try {
-    updateToastOffset();
-    const loaded = await loadUiConfig();
-    runtime.config = loaded.config;
-    runtime.configSource = loaded.source;
-    await ensureProvider(runtime).catch(() => null);
-    await refreshPage();
-  } catch (error) {
-    reportError(error, "Initialize admin page");
-  }
-
   bindEvents();
+  updateToastOffset();
+
+  pageInitPromise = (async () => {
+    updateToastOffset();
+    try {
+      const loaded = await loadUiConfig();
+      runtime.config = loaded.config;
+      runtime.configSource = loaded.source;
+      await ensureProvider(runtime).catch(() => null);
+      await refreshPage();
+    } catch (error) {
+      reportError(error, "Initialize admin page");
+    }
+  })();
+
+  await pageInitPromise;
   updateToastOffset();
 }
 
