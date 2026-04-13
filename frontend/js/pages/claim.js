@@ -16,11 +16,12 @@ import {
   disconnectWallet,
   resetProvider,
   syncWalletState,
+  switchConfiguredNetwork,
   bindWalletEvents,
   getAvailableWallets,
 } from "../shared/wallet.js";
 import { promptForWalletSelection } from "../shared/wallet-picker.js";
-import { loadClaimCatalog, fetchClaimSource, findClaimEntry } from "../shared/claims.js";
+import { loadClaimCatalog, fetchClaimSource, findClaimEntry, isMissingClaimSourceError } from "../shared/claims.js";
 
 const runtime = {
   provider: null,
@@ -60,6 +61,7 @@ const els = {
   claimToast: document.getElementById("claimToast"),
   claimToastMessage: document.getElementById("claimToastMessage"),
   claimToastClose: document.getElementById("claimToastClose"),
+  switchNetworkButton: document.getElementById("switchNetworkButton"),
 };
 
 const toast = createToastController({
@@ -216,6 +218,9 @@ function syncWalletButton() {
   els.walletMenuAddress.textContent = runtime.account ? formatAddressShort(runtime.account) : "-";
   els.walletMenuAddress.title = runtime.account || "";
   els.walletMenuChainId.textContent = runtime.chainId == null ? "-" : String(runtime.chainId);
+  if (els.switchNetworkButton) {
+    els.switchNetworkButton.hidden = !runtime.account || isReadyChain();
+  }
   const showAdminLink = Boolean(
     runtime.account
     && runtime.owner
@@ -242,6 +247,22 @@ function updateFooterLinks() {
   } else {
     els.tokenExplorerLink.hidden = true;
     els.tokenExplorerLink.removeAttribute("href");
+  }
+}
+
+async function switchNetwork() {
+  await switchConfiguredNetwork(runtime.config);
+  await refreshPage();
+  logger.log(`Switched to ${runtime.config.networkName}.`, "success");
+}
+
+async function tryAutoSwitchAfterConnect() {
+  if (isReadyChain()) return;
+
+  try {
+    await switchConfiguredNetwork(runtime.config);
+  } catch (error) {
+    reportError(error, "Switch network");
   }
 }
 
@@ -328,7 +349,33 @@ function renderRoundList() {
 }
 
 async function buildRoundView(source) {
-  const artifact = await fetchClaimSource(source, runtime.claimCatalog.baseUrl, runtime.tokenDecimals);
+  let artifact;
+  try {
+    artifact = await fetchClaimSource(source, runtime.claimCatalog.baseUrl, runtime.tokenDecimals);
+  } catch (error) {
+    if (isMissingClaimSourceError(error)) {
+      console.warn(
+        `[Claims] Claim file not found for epoch ${source.epoch}: ${source.file}`,
+        error,
+      );
+
+      return {
+        source,
+        artifact: null,
+        entry: null,
+        epoch: source.epoch,
+        amountRaw: 0n,
+        onchainRoot: ethers.ZeroHash,
+        deadline: 0n,
+        claimed: false,
+        status: "error",
+        errorMessage: "",
+      };
+    }
+
+    throw error;
+  }
+
   const entry = runtime.account ? findClaimEntry(artifact, runtime.account) : null;
   const amountRaw = entry ? BigInt(entry.amountRaw) : 0n;
   const epoch = source.epoch;
@@ -479,10 +526,11 @@ function bindEvents() {
       runtime.isConnectingWallet = true;
       syncWalletButton();
       await connectWallet(runtime, selectedWalletId);
+      await pageInitPromise;
+      await tryAutoSwitchAfterConnect();
       runtime.isConnectingWallet = false;
       syncWalletButton();
       logger.log("Wallet connected.", "success");
-      await pageInitPromise;
       await refreshPage();
     } catch (error) {
       runtime.isConnectingWallet = false;
@@ -498,6 +546,14 @@ function bindEvents() {
       logger.log("Wallet disconnected.");
     } catch (error) {
       reportError(error, "Disconnect wallet");
+    }
+  });
+
+  els.switchNetworkButton?.addEventListener("click", async () => {
+    try {
+      await switchNetwork();
+    } catch (error) {
+      reportError(error, "Switch network");
     }
   });
 

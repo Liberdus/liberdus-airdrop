@@ -23,6 +23,7 @@ import {
   disconnectWallet,
   resetProvider,
   syncWalletState,
+  switchConfiguredNetwork,
   bindWalletEvents,
   getAvailableWallets,
 } from "../shared/wallet.js";
@@ -64,6 +65,7 @@ const els = {
   walletMenu: document.getElementById("walletMenu"),
   walletMenuAddress: document.getElementById("walletMenuAddress"),
   walletMenuChainId: document.getElementById("walletMenuChainId"),
+  switchNetworkButton: document.getElementById("switchNetworkButton"),
   claimPageButton: document.getElementById("claimPageButton"),
   copyWalletAddressButton: document.getElementById("copyWalletAddressButton"),
   disconnectButton: document.getElementById("disconnectButton"),
@@ -71,6 +73,7 @@ const els = {
   ownerAddress: document.getElementById("ownerAddress"),
   accountRole: document.getElementById("accountRole"),
   adminGateMessage: document.getElementById("adminGateMessage"),
+  switchNetworkGateButton: document.getElementById("switchNetworkGateButton"),
   adminShell: document.getElementById("adminShell"),
   currentEpoch: document.getElementById("currentEpoch"),
   tokenSummary: document.getElementById("tokenSummary"),
@@ -311,7 +314,26 @@ function syncWalletButton() {
   els.walletMenuAddress.textContent = runtime.account ? formatAddressShort(runtime.account) : "-";
   els.walletMenuAddress.title = runtime.account || "";
   els.walletMenuChainId.textContent = runtime.chainId == null ? "-" : String(runtime.chainId);
+  if (els.switchNetworkButton) {
+    els.switchNetworkButton.hidden = !runtime.account || isReadyChain();
+  }
   setWalletMenuOpen(false);
+}
+
+async function switchNetwork() {
+  await switchConfiguredNetwork(runtime.config);
+  await refreshPage();
+  logger.log(`Switched to ${runtime.config.networkName}.`, "success");
+}
+
+async function tryAutoSwitchAfterConnect() {
+  if (isReadyChain()) return;
+
+  try {
+    await switchConfiguredNetwork(runtime.config);
+  } catch (error) {
+    reportError(error, "Switch network");
+  }
 }
 
 function readRequiredAddress(input) {
@@ -532,6 +554,7 @@ function applyOwnerGate() {
   if (!runtime.provider) {
     els.accountRole.textContent = "Wallet missing";
     els.adminGateMessage.textContent = "Install a compatible browser wallet to manage the airdrop.";
+    els.switchNetworkGateButton.hidden = true;
     els.adminShell.hidden = true;
     return;
   }
@@ -539,6 +562,7 @@ function applyOwnerGate() {
   if (!runtime.account) {
     els.accountRole.textContent = "Disconnected";
     els.adminGateMessage.textContent = "Connect the owner wallet to view admin controls.";
+    els.switchNetworkGateButton.hidden = true;
     els.adminShell.hidden = true;
     return;
   }
@@ -546,6 +570,7 @@ function applyOwnerGate() {
   if (!isReadyChain()) {
     els.accountRole.textContent = "Wrong network";
     els.adminGateMessage.textContent = "Switch the connected wallet to the configured network to manage the airdrop.";
+    els.switchNetworkGateButton.hidden = false;
     els.adminShell.hidden = true;
     return;
   }
@@ -553,6 +578,7 @@ function applyOwnerGate() {
   if (!runtime.owner) {
     els.accountRole.textContent = "Connected wallet";
     els.adminGateMessage.textContent = "Owner address is not available yet. Check the contract config.";
+    els.switchNetworkGateButton.hidden = true;
     els.adminShell.hidden = true;
     return;
   }
@@ -560,12 +586,14 @@ function applyOwnerGate() {
   if (!isOwner()) {
     els.accountRole.textContent = "Connected wallet";
     els.adminGateMessage.textContent = "This page only unlocks for the current owner address.";
+    els.switchNetworkGateButton.hidden = true;
     els.adminShell.hidden = true;
     return;
   }
 
   els.accountRole.textContent = "Owner connected";
   els.adminGateMessage.textContent = "Owner wallet detected. Admin controls are unlocked.";
+  els.switchNetworkGateButton.hidden = true;
   els.adminShell.hidden = false;
   updateStartAirdropButtonState();
 }
@@ -698,10 +726,11 @@ function bindEvents() {
       runtime.isConnectingWallet = true;
       syncWalletButton();
       await connectWallet(runtime, selectedWalletId);
+      await pageInitPromise;
+      await tryAutoSwitchAfterConnect();
       runtime.isConnectingWallet = false;
       syncWalletButton();
       logger.log("Wallet connected.", "success");
-      await pageInitPromise;
       await refreshPage();
     } catch (error) {
       runtime.isConnectingWallet = false;
@@ -725,6 +754,22 @@ function bindEvents() {
       logger.log("Wallet disconnected.");
     } catch (error) {
       reportError(error, "Disconnect wallet");
+    }
+  });
+
+  els.switchNetworkButton?.addEventListener("click", async () => {
+    try {
+      await switchNetwork();
+    } catch (error) {
+      reportError(error, "Switch network");
+    }
+  });
+
+  els.switchNetworkGateButton?.addEventListener("click", async () => {
+    try {
+      await switchNetwork();
+    } catch (error) {
+      reportError(error, "Switch network");
     }
   });
 

@@ -54,7 +54,13 @@ export async function fetchClaimSource(source, catalogBaseUrl, tokenDecimals) {
   const sourceUrl = new URL(source.file, catalogBaseUrl);
   const response = await fetch(sourceUrl, { cache: "no-store" });
   if (!response.ok) {
-    throw new Error(`Failed to load claim file ${source.file} (${response.status}).`);
+    const error = new Error(`Failed to load claim file ${source.file} (${response.status}).`);
+    error.status = response.status;
+    error.sourceFile = source.file;
+    if (response.status === 404) {
+      error.name = "ClaimSourceNotFoundError";
+    }
+    throw error;
   }
 
   const rawText = await response.text();
@@ -63,6 +69,10 @@ export async function fetchClaimSource(source, catalogBaseUrl, tokenDecimals) {
     source,
     artifactUrl: sourceUrl.toString(),
   };
+}
+
+export function isMissingClaimSourceError(error) {
+  return error?.name === "ClaimSourceNotFoundError" || error?.status === 404;
 }
 
 export function findClaimEntry(round, account) {
