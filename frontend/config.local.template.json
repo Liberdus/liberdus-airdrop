@@ -2,6 +2,7 @@
   "chainId": 1337,
   "networkName": "Hardhat Local",
   "rpcUrl": "http://127.0.0.1:8545",
+  "explorerBaseUrl": "",
   "nativeCurrency": {
     "name": "ETH",
     "symbol": "ETH",
@@ -9,6 +10,5 @@
   },
   "claimsManifestPath": "./claims/index.json",
   "tokenAddress": "",
-  "dustTokenAddress": "",
   "airdropAddress": ""
 }

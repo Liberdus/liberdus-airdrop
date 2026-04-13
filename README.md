@@ -35,9 +35,19 @@ The frontend lives in `frontend/` and is served without any frontend framework o
 ```bash
 npm run node
 npm run deploy:local
+npm run fund:owner:local
 ```
 
 `npm run deploy:local` writes `frontend/config.local.json` with the current local deployment addresses used by the frontend.
+
+For hosted deployments, the frontend reads `frontend/config.json`. Publish the right config file before deploying:
+
+```bash
+npm run publish:config:test
+npm run publish:config:prod
+```
+
+Those commands copy `frontend/config.test.json` or `frontend/config.prod.json` to `frontend/config.json`.
 
 Serve the repo with any static file server, then open:
 

@@ -2,47 +2,7 @@
   "rounds": [
     {
       "epoch": 1,
-      "file": "./hardhat-round-2.claims.json"
-    },
-    {
-      "epoch": 2,
-      "file": "./hardhat-round-2.claims.json"
-    },
-    {
-      "epoch": 3,
-      "file": "./hardhat-round-3.claims.json"
-    },
-    {
-      "epoch": 4,
-      "file": "./hardhat-round-4.claims.json"
-    },
-    {
-      "epoch": 5,
-      "file": "./hardhat-round-5.claims.json"
-    },
-    {
-      "epoch": 6,
-      "file": "./hardhat-round-6.claims.json"
-    },
-    {
-      "epoch": 7,
-      "file": "./hardhat-round-7.claims.json"
-    },
-    {
-      "epoch": 8,
-      "file": "./hardhat-round-8.claims.json"
-    },
-    {
-      "epoch": 9,
-      "file": "./hardhat-round-9.claims.json"
-    },
-    {
-      "epoch": 10,
-      "file": "./hardhat-round-10.claims.json"
-    },
-    {
-      "epoch": 11,
-      "file": "./hardhat-round-11.claims.json"
+      "file": "./hardhat-round-1.claims.json"
     }
   ]
 }

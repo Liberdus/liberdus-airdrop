@@ -145,3 +145,21 @@ The normal workflow is:
 4. start the new airdrop
 5. copy the same raw claims JSON into `frontend/claims/`
 6. add the epoch/file mapping to `frontend/claims/index.json`
+
+## Frontend Config Publishing
+
+Hosted deployments should publish exactly one runtime config file as `frontend/config.json`.
+
+Use:
+
+```bash
+npm run publish:config:test
+```
+
+or:
+
+```bash
+npm run publish:config:prod
+```
+
+Local development still uses the ignored `frontend/config.local.json` when running on `localhost`.

@@ -47,6 +47,8 @@ const els = {
   copyWalletAddressButton: document.getElementById("copyWalletAddressButton"),
   disconnectButton: document.getElementById("disconnectButton"),
   roundList: document.getElementById("roundList"),
+  addTokenButton: document.getElementById("addTokenButton"),
+  tokenExplorerLink: document.getElementById("tokenExplorerLink"),
   claimToast: document.getElementById("claimToast"),
   claimToastMessage: document.getElementById("claimToastMessage"),
   claimToastClose: document.getElementById("claimToastClose"),
@@ -142,6 +144,35 @@ async function copyWalletAddress() {
   logger.log("Wallet address copied.", "success");
 }
 
+async function addTokenToMetaMask() {
+  if (!window.ethereum?.request) {
+    throw new Error("MetaMask was not detected in this browser.");
+  }
+
+  if (!runtime.config.tokenAddress) {
+    throw new Error("Token address is not configured.");
+  }
+
+  const wasAdded = await window.ethereum.request({
+    method: "wallet_watchAsset",
+    params: {
+      type: "ERC20",
+      options: {
+        address: runtime.config.tokenAddress,
+        symbol: runtime.tokenSymbol || "LIB",
+        decimals: runtime.tokenDecimals ?? 18,
+      },
+    },
+  });
+
+  if (wasAdded) {
+    logger.log("Token added to MetaMask.", "success");
+    return;
+  }
+
+  logger.log("Token import was closed.");
+}
+
 function syncWalletButton() {
   const label = runtime.account ? formatAddressShort(runtime.account) : "Connect Wallet";
   els.connectButton.textContent = label;
@@ -155,6 +186,20 @@ function syncWalletButton() {
   );
   els.adminPageButton.hidden = !showAdminLink;
   setWalletMenuOpen(false);
+}
+
+function updateFooterLinks() {
+  const hasTokenAddress = Boolean(runtime.config.tokenAddress);
+  els.addTokenButton.disabled = !hasTokenAddress;
+
+  const explorerBaseUrl = String(runtime.config.explorerBaseUrl || "").trim().replace(/\/+$/, "");
+  if (explorerBaseUrl && hasTokenAddress) {
+    els.tokenExplorerLink.href = `${explorerBaseUrl}/address/${runtime.config.tokenAddress}`;
+    els.tokenExplorerLink.hidden = false;
+  } else {
+    els.tokenExplorerLink.hidden = true;
+    els.tokenExplorerLink.removeAttribute("href");
+  }
 }
 
 function getVisibleRounds() {
@@ -333,6 +378,7 @@ async function refreshPage() {
   }
 
   syncWalletButton();
+  updateFooterLinks();
   await refreshRounds();
 }
 
@@ -406,6 +452,14 @@ function bindEvents() {
 
   els.adminPageButton?.addEventListener("click", () => {
     window.location.href = "./admin.html";
+  });
+
+  els.addTokenButton?.addEventListener("click", async () => {
+    try {
+      await addTokenToMetaMask();
+    } catch (error) {
+      reportError(error, "Add token");
+    }
   });
 
   bindWalletEvents({

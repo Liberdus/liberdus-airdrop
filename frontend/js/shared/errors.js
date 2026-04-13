@@ -273,6 +273,7 @@ export function createErrorReporter(log, getRuntime) {
     const message = error instanceof Error && typeof error.message === "string" && error.message.startsWith(`${context}:`)
       ? error.message
       : formatUiError(error, context, runtime);
+    console.error(`[${context}]`, error);
     log(message, "error");
   };
 }
@@ -280,6 +281,7 @@ export function createErrorReporter(log, getRuntime) {
 export function bindGlobalErrorHandlers(reportError) {
   window.addEventListener("error", (event) => {
     if (!event.error && !event.message) return;
+    console.error("[Browser error event]", event.error ?? event.message, event);
     reportError(event.error ?? new Error(event.message), "Browser error");
   });
 
@@ -288,6 +290,7 @@ export function bindGlobalErrorHandlers(reportError) {
       event.preventDefault();
       return;
     }
+    console.error("[Unhandled rejection]", event.reason, event);
     reportError(event.reason ?? new Error("Unhandled promise rejection."), "Unhandled rejection");
   });
 }

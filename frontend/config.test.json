@@ -1,0 +1,14 @@
+{
+  "chainId": 97,
+  "networkName": "BNB Smart Chain Testnet",
+  "rpcUrl": "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+  "explorerBaseUrl": "https://testnet.bscscan.com",
+  "nativeCurrency": {
+    "name": "tBNB",
+    "symbol": "tBNB",
+    "decimals": 18
+  },
+  "claimsManifestPath": "./claims/index.json",
+  "tokenAddress": "",
+  "airdropAddress": ""
+}

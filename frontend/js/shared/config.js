@@ -1,23 +1,32 @@
 import { STORAGE_KEY, UI_ROOT, toChainIdHex } from "./constants.js";
 import { normalizeAddress } from "./format.js";
 
+function isLocalhost() {
+  return window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+}
+
 export async function loadUiConfig() {
   let loaded = null;
-  let source = "template";
+  let source = "config.json";
 
-  try {
-    const localResponse = await fetch(new URL("./config.local.json", UI_ROOT), { cache: "no-store" });
-    if (localResponse.ok) {
-      loaded = await localResponse.json();
-      source = "config.local.json";
+  if (isLocalhost()) {
+    try {
+      const localResponse = await fetch(new URL("./config.local.json", UI_ROOT), { cache: "no-store" });
+      if (localResponse.ok) {
+        loaded = await localResponse.json();
+        source = "config.local.json";
+      }
+    } catch {
+      // Fall through to config.json.
     }
-  } catch {
-    // Fall through to template.
   }
 
   if (!loaded) {
-    const templateResponse = await fetch(new URL("./config.local.template.json", UI_ROOT), { cache: "no-store" });
-    loaded = await templateResponse.json();
+    const configResponse = await fetch(new URL("./config.json", UI_ROOT), { cache: "no-store" });
+    if (!configResponse.ok) {
+      throw new Error("Unable to load frontend config.json.");
+    }
+    loaded = await configResponse.json();
   }
 
   const savedOverrides = window.localStorage.getItem(STORAGE_KEY);
@@ -31,6 +40,7 @@ export async function loadUiConfig() {
     dustTokenAddress: normalizeAddress(overrides.dustTokenAddress || loaded.dustTokenAddress || ""),
     airdropAddress: normalizeAddress(overrides.airdropAddress || loaded.airdropAddress || ""),
     claimsManifestPath: String(overrides.claimsManifestPath || loaded.claimsManifestPath || "./claims/index.json"),
+    explorerBaseUrl: String(overrides.explorerBaseUrl || loaded.explorerBaseUrl || "").trim(),
   };
 
   config.chainId = Number(config.chainId);

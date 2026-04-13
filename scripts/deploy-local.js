@@ -20,9 +20,9 @@ async function main() {
   const network = await ethers.provider.getNetwork();
   const config = {
     chainId: Number(network.chainId),
-    chainIdHex: `0x${network.chainId.toString(16)}`,
     networkName: "Hardhat Local",
     rpcUrl: "http://127.0.0.1:8545",
+    explorerBaseUrl: "",
     nativeCurrency: {
       name: "ETH",
       symbol: "ETH",

@@ -10,7 +10,10 @@
     "node": "hardhat node",
     "deploy:local": "hardhat run scripts/deploy-local.js --network localhost",
     "fund:owner:local": "hardhat fund-owner-wallet --network localhost",
-    "merkle": "node scripts/generate-merkle.js"
+    "merkle": "node scripts/generate-merkle.js",
+    "generate:test-claims": "node scripts/generate-test-claims.js --start-epoch 1",
+    "publish:config:test": "node scripts/publish-frontend-config.js --env test",
+    "publish:config:prod": "node scripts/publish-frontend-config.js --env prod"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
