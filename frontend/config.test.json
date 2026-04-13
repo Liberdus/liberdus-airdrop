@@ -9,6 +9,6 @@
     "decimals": 18
   },
   "claimsManifestPath": "./claims/index.json",
-  "tokenAddress": "",
-  "airdropAddress": ""
+  "tokenAddress": "0x48463C89254d001Bdc6B5d2af92d531E60FB4f72",
+  "airdropAddress": "0x822C39eFe9055593418071a80552760282fB1B71"
 }
