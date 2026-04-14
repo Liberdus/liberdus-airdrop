@@ -8,6 +8,8 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test --grep @smoke",
+    "test:e2e:non-smoke": "playwright test --grep-invert @smoke",
     "node": "hardhat node",
     "deploy:local": "hardhat run scripts/deploy-local.js --network localhost",
     "deploy:airdrop:bsc:testnet": "hardhat run scripts/deploy-airdrop.js --network bscTestnet",
