@@ -349,7 +349,48 @@
             </form>
           </section>
         </section>
+
       </div>
+
+      <section id="ownershipShell" class="frame" hidden>
+        <div class="panel-title-row">
+          <div>
+            <h2>Ownership Transfer</h2>
+            <p class="hint">Ownable2Step uses two transactions: the current owner nominates a pending owner, then that pending owner accepts from their wallet.</p>
+          </div>
+        </div>
+
+        <div class="detail-list">
+          <article class="detail-item">
+            <h3>Current Owner</h3>
+            <p id="ownershipCurrentOwner">-</p>
+          </article>
+          <article class="detail-item">
+            <h3>Pending Owner</h3>
+            <p id="ownershipPendingOwner">-</p>
+          </article>
+          <article class="detail-item">
+            <h3>Connected Wallet</h3>
+            <p id="ownershipConnectedWallet">-</p>
+          </article>
+        </div>
+
+        <p id="ownershipStatusMessage" class="hint">Connect the owner or pending owner wallet on the configured network to manage ownership.</p>
+
+        <div class="card-grid ownership-grid">
+          <form id="transferOwnershipForm" class="card-form">
+            <h3>Set Pending Owner</h3>
+            <label><span>New Owner Address</span><input id="transferOwnershipAddress" type="text" placeholder="0x..."></label>
+            <button id="transferOwnershipButton" type="submit">Transfer Ownership</button>
+          </form>
+
+          <form id="acceptOwnershipForm" class="card-form">
+            <h3>Accept Ownership</h3>
+            <p class="hint">Only the pending owner can complete the second step.</p>
+            <button id="acceptOwnershipButton" type="submit">Accept Ownership</button>
+          </form>
+        </div>
+      </section>
     </main>
 
     <script type="module" src="./js/pages/admin.js"></script>

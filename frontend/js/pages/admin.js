@@ -42,6 +42,7 @@ const runtime = {
   selectedWalletId: null,
   selectedWalletName: null,
   owner: null,
+  pendingOwner: null,
   currentEpoch: 0,
   epochRows: [],
   claimCatalog: null,
@@ -73,6 +74,16 @@ const els = {
   disconnectButton: document.getElementById("disconnectButton"),
   connectedAccount: document.getElementById("connectedAccount"),
   ownerAddress: document.getElementById("ownerAddress"),
+  ownershipShell: document.getElementById("ownershipShell"),
+  ownershipCurrentOwner: document.getElementById("ownershipCurrentOwner"),
+  ownershipPendingOwner: document.getElementById("ownershipPendingOwner"),
+  ownershipConnectedWallet: document.getElementById("ownershipConnectedWallet"),
+  ownershipStatusMessage: document.getElementById("ownershipStatusMessage"),
+  transferOwnershipForm: document.getElementById("transferOwnershipForm"),
+  transferOwnershipAddress: document.getElementById("transferOwnershipAddress"),
+  transferOwnershipButton: document.getElementById("transferOwnershipButton"),
+  acceptOwnershipForm: document.getElementById("acceptOwnershipForm"),
+  acceptOwnershipButton: document.getElementById("acceptOwnershipButton"),
   accountRole: document.getElementById("accountRole"),
   adminGateMessage: document.getElementById("adminGateMessage"),
   switchNetworkGateButton: document.getElementById("switchNetworkGateButton"),
@@ -518,6 +529,19 @@ function isOwner() {
   return Boolean(runtime.account && runtime.owner && normalizeAddress(runtime.account) === normalizeAddress(runtime.owner));
 }
 
+function isPendingOwner() {
+  return Boolean(
+    runtime.account
+    && runtime.pendingOwner
+    && normalizeAddress(runtime.pendingOwner) !== ethers.ZeroAddress
+    && normalizeAddress(runtime.account) === normalizeAddress(runtime.pendingOwner),
+  );
+}
+
+function hasOwnershipAccess() {
+  return Boolean(runtime.account && isReadyChain() && (isOwner() || isPendingOwner()));
+}
+
 function setWalletMenuOpen(isOpen) {
   if (!els.walletMenu || !els.connectButton || !runtime.account) {
     els.walletMenu?.setAttribute("hidden", "");
@@ -759,6 +783,43 @@ function renderEpochList() {
     .join("");
 }
 
+function applyOwnershipSection() {
+  if (!els.ownershipShell) return;
+
+  const normalizedPendingOwner = normalizeAddress(runtime.pendingOwner);
+  const hasPendingOwner = Boolean(normalizedPendingOwner && normalizedPendingOwner !== ethers.ZeroAddress);
+
+  els.ownershipCurrentOwner.textContent = runtime.owner || "-";
+  els.ownershipPendingOwner.textContent = hasPendingOwner ? normalizedPendingOwner : "No pending owner";
+  els.ownershipConnectedWallet.textContent = runtime.account || "No wallet connected";
+
+  if (!runtime.provider || !runtime.account) {
+    els.ownershipShell.hidden = true;
+    return;
+  }
+
+  if (!isReadyChain()) {
+    els.ownershipShell.hidden = true;
+    return;
+  }
+
+  const canTransfer = isOwner();
+  const canAccept = isPendingOwner();
+
+  els.ownershipShell.hidden = !(canTransfer || canAccept);
+  els.transferOwnershipButton.disabled = !canTransfer;
+  els.transferOwnershipAddress.disabled = !canTransfer;
+  els.acceptOwnershipButton.disabled = !canAccept;
+
+  if (canTransfer) {
+    els.ownershipStatusMessage.textContent = hasPendingOwner
+      ? "The current owner can replace the pending owner by submitting a new transfer. The pending owner must still accept from their own wallet."
+      : "Submit a new owner address to start the two-step transfer. The recipient must then connect and accept ownership.";
+  } else if (canAccept) {
+    els.ownershipStatusMessage.textContent = "This wallet is the pending owner. Submit Accept Ownership to complete the transfer.";
+  }
+}
+
 async function refreshEpochRows() {
   runtime.epochRows = [];
 
@@ -854,6 +915,7 @@ async function refreshPage() {
   syncWalletButton();
 
   runtime.owner = null;
+  runtime.pendingOwner = null;
   runtime.currentEpoch = 0;
   runtime.epochRows = [];
   runtime.chainTimestamp = Math.floor(Date.now() / 1000);
@@ -875,6 +937,7 @@ async function refreshPage() {
     });
 
     runtime.owner = snapshot.owner;
+    runtime.pendingOwner = snapshot.pendingOwner;
     runtime.currentEpoch = Number(snapshot.currentEpoch ?? 0);
     runtime.tokenSymbol = snapshot.tokenSymbol || runtime.tokenSymbol;
     runtime.tokenDecimals = snapshot.tokenDecimals ?? runtime.tokenDecimals;
@@ -891,6 +954,7 @@ async function refreshPage() {
       : "-";
   } catch {
     runtime.owner = null;
+    runtime.pendingOwner = null;
     runtime.currentEpoch = 0;
   }
 
@@ -912,6 +976,7 @@ async function refreshPage() {
 
   renderUploadedRound();
   applyOwnerGate();
+  applyOwnershipSection();
   updateStartAirdropButtonState();
 }
 
@@ -1239,6 +1304,56 @@ function bindEvents() {
       await updateEpochDeadline(0);
     } catch (error) {
       reportError(error, "Disable epoch");
+    }
+  });
+
+  els.transferOwnershipForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const { airdrop } = getContracts({
+        config: runtime.config,
+        provider: runtime.provider,
+        signer: runtime.signer,
+        withSigner: true,
+      });
+      if (!airdrop) throw new Error("Airdrop address is not configured.");
+      if (!isOwner()) throw new Error("Only the current owner can nominate a new owner.");
+
+      const nextOwner = readRequiredAddress(els.transferOwnershipAddress);
+      await sendTransaction("Transfer ownership", () => airdrop.transferOwnership(nextOwner), {
+        log: logger.log,
+        afterSuccess: async () => {
+          els.transferOwnershipAddress.value = "";
+          await refreshPage();
+        },
+        formatError: (error, label) => formatUiError(error, label, runtime),
+      });
+    } catch (error) {
+      reportError(error, "Transfer ownership");
+    }
+  });
+
+  els.acceptOwnershipForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const { airdrop } = getContracts({
+        config: runtime.config,
+        provider: runtime.provider,
+        signer: runtime.signer,
+        withSigner: true,
+      });
+      if (!airdrop) throw new Error("Airdrop address is not configured.");
+      if (!isPendingOwner()) throw new Error("Only the pending owner can accept ownership.");
+
+      await sendTransaction("Accept ownership", () => airdrop.acceptOwnership(), {
+        log: logger.log,
+        afterSuccess: async () => {
+          await refreshPage();
+        },
+        formatError: (error, label) => formatUiError(error, label, runtime),
+      });
+    } catch (error) {
+      reportError(error, "Accept ownership");
     }
   });
 

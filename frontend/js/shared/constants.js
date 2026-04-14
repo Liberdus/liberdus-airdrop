@@ -26,6 +26,7 @@ export const CHAIN_NAME_BY_ID = {
 
 export const AIRDROP_ABI = [
   "function owner() view returns (address)",
+  "function pendingOwner() view returns (address)",
   "function currentEpoch() view returns (uint256)",
   "function merkleRoots(uint256) view returns (bytes32)",
   "function deadlines(uint256) view returns (uint256)",
@@ -34,6 +35,8 @@ export const AIRDROP_ABI = [
   "function isClaimed(uint256,uint256) view returns (bool)",
   "function startNewAirdrop(bytes32,uint256)",
   "function setEpochDeadline(uint256,uint256)",
+  "function transferOwnership(address)",
+  "function acceptOwnership()",
   "function claim(uint256,uint256,address,uint256,bytes32[])",
   "function withdraw(address,uint256)",
   "function recoverERC20(address,address,uint256)",

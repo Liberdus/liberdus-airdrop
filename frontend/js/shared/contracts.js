@@ -26,6 +26,7 @@ export async function fetchDashboardSnapshot({ config, provider, account }) {
   const { airdrop, token, dustToken, airdropAddress } = getContracts({ config, provider });
   const snapshot = {
     owner: null,
+    pendingOwner: null,
     currentEpoch: null,
     tokenSymbol: null,
     tokenDecimals: null,
@@ -37,12 +38,14 @@ export async function fetchDashboardSnapshot({ config, provider, account }) {
   };
 
   if (airdrop) {
-    const [owner, currentEpoch] = await Promise.all([
+    const [owner, pendingOwner, currentEpoch] = await Promise.all([
       airdrop.owner(),
+      airdrop.pendingOwner(),
       airdrop.currentEpoch(),
     ]);
 
     snapshot.owner = owner;
+    snapshot.pendingOwner = pendingOwner;
     snapshot.currentEpoch = currentEpoch;
   }
 
