@@ -48,6 +48,8 @@ const runtime = {
   claimSourcesByEpoch: new Map(),
   claimSourcesByRoot: new Map(),
   uploadedRound: null,
+  builderRows: [],
+  nextBuilderRowId: 1,
   config: { chainId: null, networkName: "", rpcUrl: "", nativeCurrency: null, tokenAddress: "", dustTokenAddress: "", airdropAddress: "", claimsManifestPath: "./claims/index.json" },
   configSource: "template",
   tokenDecimals: 18,
@@ -79,6 +81,17 @@ const els = {
   tokenSummary: document.getElementById("tokenSummary"),
   walletTokenBalance: document.getElementById("walletTokenBalance"),
   airdropTokenBalance: document.getElementById("airdropTokenBalance"),
+  claimsBuilderForm: document.getElementById("claimsBuilderForm"),
+  builderFileNameInput: document.getElementById("builderFileNameInput"),
+  addBuilderRowButton: document.getElementById("addBuilderRowButton"),
+  clearBuilderButton: document.getElementById("clearBuilderButton"),
+  loadBuilderButton: document.getElementById("loadBuilderButton"),
+  downloadBuilderButton: document.getElementById("downloadBuilderButton"),
+  builderValidationMessage: document.getElementById("builderValidationMessage"),
+  builderClaimCount: document.getElementById("builderClaimCount"),
+  builderClaimTotal: document.getElementById("builderClaimTotal"),
+  builderMerkleRoot: document.getElementById("builderMerkleRoot"),
+  claimsBuilderBody: document.getElementById("claimsBuilderBody"),
   uploadClaimsFileInput: document.getElementById("uploadClaimsFileInput"),
   startAirdropForm: document.getElementById("startAirdropForm"),
   startAirdropButton: document.getElementById("startAirdropButton"),
@@ -188,6 +201,249 @@ function formatInputAmount(rawValue) {
   return ethers.formatUnits(rawValue, runtime.tokenDecimals).replace(/\.?0+$/, "");
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function createBuilderRow(overrides = {}) {
+  const row = {
+    id: runtime.nextBuilderRowId,
+    account: "",
+    amount: "",
+    ...overrides,
+  };
+
+  runtime.nextBuilderRowId += 1;
+  return row;
+}
+
+function isBuilderRowBlank(row) {
+  return !String(row?.account ?? "").trim() && !String(row?.amount ?? "").trim();
+}
+
+function getClaimsBuilderDefaultFileName() {
+  const nextEpoch = runtime.currentEpoch > 0 ? runtime.currentEpoch + 1 : 1;
+  return `round-${nextEpoch}.claims.json`;
+}
+
+function normalizeClaimsBuilderFileName(rawValue) {
+  let fileName = String(rawValue ?? "").trim() || getClaimsBuilderDefaultFileName();
+  if (!fileName.toLowerCase().endsWith(".json")) {
+    fileName = `${fileName}.json`;
+  }
+
+  fileName = fileName.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-").trim();
+  return fileName || getClaimsBuilderDefaultFileName();
+}
+
+function ensureClaimsBuilderFileName() {
+  if (!els.builderFileNameInput) return;
+  if (!els.builderFileNameInput.value.trim()) {
+    els.builderFileNameInput.value = getClaimsBuilderDefaultFileName();
+  }
+}
+
+function buildClaimsBuilderArtifact() {
+  const populatedRows = [];
+
+  for (const [position, row] of runtime.builderRows.entries()) {
+    const account = String(row.account ?? "").trim();
+    const amount = String(row.amount ?? "").trim();
+
+    if (!account && !amount) continue;
+
+    if (!account || !amount) {
+      throw new Error(`Row ${position + 1} must include both a wallet address and amount.`);
+    }
+
+    const normalizedAccount = normalizeAddress(account);
+    if (!normalizedAccount || normalizedAccount === ethers.ZeroAddress) {
+      throw new Error(`Row ${position + 1} has an invalid wallet address.`);
+    }
+
+    try {
+      parseHumanAmount(amount, runtime.tokenDecimals);
+    } catch {
+      throw new Error(`Row ${position + 1} has an invalid amount.`);
+    }
+
+    populatedRows.push({
+      index: populatedRows.length,
+      account: normalizedAccount,
+      amount,
+    });
+  }
+
+  if (!populatedRows.length) return null;
+
+  const round = buildClaimRound(populatedRows, runtime.tokenDecimals);
+  const rawClaims = round.claims.map((claim) => ({
+    index: Number.parseInt(claim.index, 10),
+    account: claim.account,
+    amount: formatInputAmount(BigInt(claim.amountRaw)),
+  }));
+
+  return {
+    round,
+    rawClaims,
+    rawJson: `${JSON.stringify(rawClaims, null, 2)}\n`,
+    fileName: normalizeClaimsBuilderFileName(els.builderFileNameInput?.value),
+  };
+}
+
+function setBuilderValidationMessage(message = "") {
+  if (!els.builderValidationMessage) return;
+
+  if (!message) {
+    els.builderValidationMessage.hidden = true;
+    els.builderValidationMessage.textContent = "";
+    return;
+  }
+
+  els.builderValidationMessage.hidden = false;
+  els.builderValidationMessage.textContent = message;
+}
+
+function refreshClaimsBuilderStatus() {
+  let artifact = null;
+  let errorMessage = "";
+
+  try {
+    artifact = buildClaimsBuilderArtifact();
+  } catch (error) {
+    errorMessage = error?.message || "Unable to build the claims JSON.";
+  }
+
+  let generatedIndex = 0;
+  for (const row of runtime.builderRows) {
+    const indexElement = els.claimsBuilderBody?.querySelector(`[data-builder-index="${row.id}"]`);
+    if (!indexElement) continue;
+
+    if (isBuilderRowBlank(row)) {
+      indexElement.textContent = "-";
+      continue;
+    }
+
+    indexElement.textContent = String(generatedIndex);
+    generatedIndex += 1;
+  }
+
+  if (artifact) {
+    const walletLabel = artifact.round.claimCount === 1 ? "1 wallet" : `${artifact.round.claimCount} wallets`;
+    els.builderClaimCount.textContent = walletLabel;
+    els.builderClaimTotal.textContent = formatTokenAmount(
+      BigInt(artifact.round.totalAmountRaw),
+      runtime.tokenDecimals,
+      runtime.tokenSymbol,
+    );
+    els.builderMerkleRoot.textContent = artifact.round.root;
+    els.builderMerkleRoot.title = artifact.round.root;
+    setBuilderValidationMessage("");
+  } else {
+    els.builderClaimCount.textContent = "-";
+    els.builderClaimTotal.textContent = "-";
+    els.builderMerkleRoot.textContent = "-";
+    els.builderMerkleRoot.title = "";
+    setBuilderValidationMessage(errorMessage);
+  }
+
+  const hasAnyInput = runtime.builderRows.some((row) => !isBuilderRowBlank(row));
+  els.downloadBuilderButton.disabled = !artifact;
+  els.loadBuilderButton.disabled = !artifact;
+  els.clearBuilderButton.disabled = !hasAnyInput && runtime.builderRows.length === 1;
+
+  return artifact;
+}
+
+function renderClaimsBuilderRows() {
+  if (!runtime.builderRows.length) {
+    runtime.builderRows = [createBuilderRow()];
+  }
+
+  els.claimsBuilderBody.innerHTML = runtime.builderRows
+    .map((row) => `
+      <tr data-builder-row-id="${row.id}">
+        <td><span class="builder-index" data-builder-index="${row.id}">-</span></td>
+        <td>
+          <input
+            class="builder-input"
+            data-builder-row-id="${row.id}"
+            data-builder-field="account"
+            type="text"
+            placeholder="0x..."
+            value="${escapeHtml(row.account)}"
+          >
+        </td>
+        <td>
+          <input
+            class="builder-input"
+            data-builder-row-id="${row.id}"
+            data-builder-field="amount"
+            type="text"
+            placeholder="100"
+            value="${escapeHtml(row.amount)}"
+          >
+        </td>
+        <td class="builder-row-action">
+          <button
+            type="button"
+            class="ghost table-action-button"
+            data-builder-remove="${row.id}"
+            ${runtime.builderRows.length === 1 ? "disabled" : ""}
+          >Remove</button>
+        </td>
+      </tr>
+    `)
+    .join("");
+
+  refreshClaimsBuilderStatus();
+}
+
+function resetClaimsBuilder({ preserveFileName = false } = {}) {
+  runtime.builderRows = [createBuilderRow()];
+  if (preserveFileName) {
+    ensureClaimsBuilderFileName();
+  } else {
+    els.builderFileNameInput.value = getClaimsBuilderDefaultFileName();
+  }
+  renderClaimsBuilderRows();
+}
+
+function applyUploadedRound(round, { clearUploadInput = false } = {}) {
+  runtime.uploadedRound = round;
+  runtime.startRequiresNewUpload = false;
+  if (clearUploadInput) {
+    els.uploadClaimsFileInput.value = "";
+  }
+  els.startRootInput.value = runtime.uploadedRound.root;
+  els.fundAirdropAmount.value = formatInputAmount(BigInt(runtime.uploadedRound.totalAmountRaw));
+  renderUploadedRound();
+  updateStartAirdropButtonState();
+}
+
+function downloadClaimsBuilderJson() {
+  const artifact = buildClaimsBuilderArtifact();
+  if (!artifact) {
+    throw new Error("Add at least one valid wallet row before downloading JSON.");
+  }
+
+  els.builderFileNameInput.value = artifact.fileName;
+  const blob = new Blob([artifact.rawJson], { type: "application/json" });
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = artifact.fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(downloadUrl);
+}
+
 function getEpochStatus(deadline) {
   const deadlineNumber = Number(deadline ?? 0);
   if (deadlineNumber === 0) return "Disabled";
@@ -224,7 +480,7 @@ function updateStartRootWarning() {
   let tone = "warn";
 
   if (runtime.startRequiresNewUpload && runtime.uploadedRound) {
-    message = "This claims file was already started successfully. Upload a new claims file before starting another airdrop.";
+    message = "This claims file was already started successfully. Prepare a new claims file before starting another airdrop.";
     if (matchingEpochs.length) {
       message += ` Matching Merkle root found in ${epochLabel}.`;
     }
@@ -420,7 +676,7 @@ function renderUploadedRound() {
   if (!round) {
     els.uploadedClaimCount.textContent = "-";
     els.uploadedClaimTotal.textContent = "-";
-    els.uploadPreviewBody.innerHTML = '<tr><td colspan="3" class="empty-row">Upload a claims JSON file to preview it.</td></tr>';
+    els.uploadPreviewBody.innerHTML = '<tr><td colspan="3" class="empty-row">Upload or build a claims JSON file to preview it.</td></tr>';
     els.fundUploadedButton.disabled = true;
     els.clearUploadedButton.disabled = true;
     return;
@@ -444,12 +700,7 @@ function renderUploadedRound() {
 
 async function loadUploadedClaimsFile(file) {
   const rawText = await file.text();
-  runtime.uploadedRound = buildClaimRound(rawText, runtime.tokenDecimals);
-  runtime.startRequiresNewUpload = false;
-  els.startRootInput.value = runtime.uploadedRound.root;
-  els.fundAirdropAmount.value = formatInputAmount(BigInt(runtime.uploadedRound.totalAmountRaw));
-  renderUploadedRound();
-  updateStartAirdropButtonState();
+  applyUploadedRound(buildClaimRound(rawText, runtime.tokenDecimals));
 }
 
 async function refreshCatalogRounds() {
@@ -652,6 +903,13 @@ async function refreshPage() {
     renderEpochList();
   });
 
+  if (!runtime.builderRows.length) {
+    resetClaimsBuilder();
+  } else {
+    ensureClaimsBuilderFileName();
+    refreshClaimsBuilderStatus();
+  }
+
   renderUploadedRound();
   applyOwnerGate();
   updateStartAirdropButtonState();
@@ -659,7 +917,7 @@ async function refreshPage() {
 
 async function fundUploadedRound() {
   if (!runtime.uploadedRound) {
-    throw new Error("Upload a claims JSON file first.");
+    throw new Error("Prepare a claims JSON file first.");
   }
 
   const { token, airdropAddress } = getContracts({
@@ -786,6 +1044,77 @@ function bindEvents() {
     window.location.href = "./index.html";
   });
 
+  els.builderFileNameInput?.addEventListener("blur", () => {
+    els.builderFileNameInput.value = normalizeClaimsBuilderFileName(els.builderFileNameInput.value);
+  });
+
+  els.addBuilderRowButton?.addEventListener("click", () => {
+    const nextRow = createBuilderRow();
+    runtime.builderRows.push(nextRow);
+    renderClaimsBuilderRows();
+    els.claimsBuilderBody
+      ?.querySelector(`input[data-builder-row-id="${nextRow.id}"][data-builder-field="account"]`)
+      ?.focus();
+  });
+
+  els.claimsBuilderBody?.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+
+    const rowId = Number(target.dataset.builderRowId);
+    const field = target.dataset.builderField;
+    if (!Number.isInteger(rowId) || (field !== "account" && field !== "amount")) return;
+
+    const row = runtime.builderRows.find((item) => item.id === rowId);
+    if (!row) return;
+
+    row[field] = target.value;
+    refreshClaimsBuilderStatus();
+  });
+
+  els.claimsBuilderBody?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    const removeButton = target.closest("[data-builder-remove]");
+    if (!removeButton) return;
+
+    const rowId = Number(removeButton.getAttribute("data-builder-remove"));
+    if (!Number.isInteger(rowId)) return;
+
+    runtime.builderRows = runtime.builderRows.filter((row) => row.id !== rowId);
+    if (!runtime.builderRows.length) {
+      runtime.builderRows = [createBuilderRow()];
+    }
+    renderClaimsBuilderRows();
+  });
+
+  els.clearBuilderButton?.addEventListener("click", () => {
+    resetClaimsBuilder({ preserveFileName: true });
+    logger.log("Claims builder cleared.");
+  });
+
+  els.loadBuilderButton?.addEventListener("click", async () => {
+    try {
+      const artifact = buildClaimsBuilderArtifact();
+      if (!artifact) throw new Error("Add at least one valid wallet row before loading claims.");
+
+      applyUploadedRound(artifact.round, { clearUploadInput: true });
+      logger.log("Built claims loaded.", "success");
+    } catch (error) {
+      reportError(error, "Use built claims");
+    }
+  });
+
+  els.downloadBuilderButton?.addEventListener("click", async () => {
+    try {
+      downloadClaimsBuilderJson();
+      logger.log(`Claims JSON downloaded as ${normalizeClaimsBuilderFileName(els.builderFileNameInput.value)}.`, "success");
+    } catch (error) {
+      reportError(error, "Download claims JSON");
+    }
+  });
+
   els.uploadClaimsFileInput.addEventListener("change", async (event) => {
     const file = event.target.files?.[0];
 
@@ -805,7 +1134,7 @@ function bindEvents() {
 
   els.clearUploadedButton.addEventListener("click", () => {
     clearUploadedRoundState();
-    logger.log("Claims file cleared.");
+    logger.log("Prepared claims cleared.");
   });
 
   els.fundUploadedButton.addEventListener("click", async () => {
@@ -864,7 +1193,7 @@ function bindEvents() {
   els.startAirdropForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      if (!runtime.uploadedRound) throw new Error("Upload a claims JSON file first.");
+      if (!runtime.uploadedRound) throw new Error("Prepare a claims JSON file first.");
 
       const { airdrop } = getContracts({
         config: runtime.config,

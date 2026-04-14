@@ -12,7 +12,12 @@ The claimant page does not use stored proof artifacts. It loads the raw claims J
 
 ## 1. Create The Raw Claims JSON
 
-Create a file under [examples](C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/examples) with one entry per wallet.
+You can create the raw claims JSON in either of these ways:
+
+1. use the admin page builder to enter wallet addresses and amounts, then download the generated JSON file
+2. create a file manually under [examples](C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/examples) with one entry per wallet
+
+The generated file should contain one entry per wallet.
 
 Example:
 
@@ -83,11 +88,12 @@ Open the admin page:
 Then:
 
 1. connect the owner wallet
-2. upload the raw claims JSON file
-3. verify the preview table, total rewards, and calculated root
-4. optionally click `Fund Contract With Uploaded Total`
-5. enter the deadline
-6. submit `Start New Airdrop`
+2. either build the raw claims JSON in `Build Claims JSON` and click `Use Built Claims`, or upload an existing raw claims JSON file
+3. if you used the builder, click `Download JSON` to save the deployable raw claims file
+4. verify the preview table, total rewards, and calculated root
+5. optionally click `Fund Contract With Uploaded Total`
+6. enter the deadline
+7. submit `Start New Airdrop`
 
 The contract will reject:
 
@@ -139,12 +145,13 @@ The claimant page treats a deadline of `0` as closed.
 
 The normal workflow is:
 
-1. create raw claims JSON in `examples/`
-2. calculate the root in the admin page or with `npm run merkle`
-3. fund the contract
-4. start the new airdrop
-5. copy the same raw claims JSON into `frontend/claims/`
-6. add the epoch/file mapping to `frontend/claims/index.json`
+1. create raw claims JSON in the admin page builder or in `examples/`
+2. download or save that raw claims JSON file
+3. calculate the root in the admin page or with `npm run merkle`
+4. fund the contract
+5. start the new airdrop
+6. copy the same raw claims JSON into `frontend/claims/`
+7. add the epoch/file mapping to `frontend/claims/index.json`
 
 ## Frontend Config Publishing
 
