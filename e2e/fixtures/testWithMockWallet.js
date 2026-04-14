@@ -1,8 +1,18 @@
 const path = require("node:path");
 const { expect, test: base } = require("@playwright/test");
-const { resetLocalChain, rpcCall, RPC_URL } = require("../helpers/hardhatChain");
+const {
+  createSnapshot,
+  resetLocalChain,
+  revertSnapshot,
+  rpcCall,
+  RPC_URL,
+} = require("../helpers/hardhatChain");
 
 const STORAGE_KEY = "liberdus-airdrop-ui-config";
+const DEFAULT_UI_CONFIG = {
+  claimsManifestPath: "./claims/e2e/index.json",
+  explorerBaseUrl: "https://explorer.local.test",
+};
 
 const MOCK_WALLETS = {
   owner: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
@@ -266,25 +276,44 @@ function installHardhatBackedWalletMock(config) {
     },
   });
 
+  let existingUiConfig = {};
+  try {
+    existingUiConfig = JSON.parse(localStorage.getItem(config.storageKey) || "{}");
+  } catch {
+    existingUiConfig = {};
+  }
+
   localStorage.setItem(config.storageKey, JSON.stringify({
     claimsManifestPath: config.claimsManifestPath,
     explorerBaseUrl: config.explorerBaseUrl,
+    ...existingUiConfig,
   }));
 
   window.dispatchEvent(new Event("ethereum#initialized"));
 }
 
 const test = base.extend({
-  hardhatChain: async ({}, use) => {
+  hardhatChain: [async ({}, use) => {
+    await resetLocalChain();
+    let baseSnapshotId = await createSnapshot(RPC_URL);
+
     await use({
       rpcCall: (method, params = []) => rpcCall(method, params, RPC_URL),
-      reset: () => resetLocalChain(),
+      async resetToBase(testTitle = "test") {
+        const reverted = await revertSnapshot(baseSnapshotId, RPC_URL);
+        if (!reverted) {
+          throw new Error(`Failed to revert Hardhat snapshot ${baseSnapshotId} before ${testTitle}.`);
+        }
+
+        baseSnapshotId = await createSnapshot(RPC_URL);
+        return baseSnapshotId;
+      },
       rpcUrl: RPC_URL,
     });
-  },
-  resetLocalStack: [
-    async ({ hardhatChain }, use) => {
-      await hardhatChain.reset();
+  }, { scope: "worker" }],
+  isolatedChain: [
+    async ({ hardhatChain }, use, testInfo) => {
+      await hardhatChain.resetToBase(testInfo.title);
       await use();
     },
     { auto: true },
@@ -325,10 +354,36 @@ const test = base.extend({
       async connect(page) {
         return page.evaluate(() => window.ethereum.request({ method: "eth_requestAccounts" }));
       },
+      async setUiConfig(page, overrides) {
+        return page.evaluate(
+          ({ storageKey, nextOverrides }) => {
+            const current = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+            const merged = { ...current, ...nextOverrides };
+            window.localStorage.setItem(storageKey, JSON.stringify(merged));
+            return merged;
+          },
+          { storageKey: STORAGE_KEY, nextOverrides: overrides },
+        );
+      },
+      async resetUiConfig(page) {
+        return page.evaluate(
+          ({ storageKey, defaults }) => {
+            window.localStorage.setItem(storageKey, JSON.stringify(defaults));
+            return defaults;
+          },
+          { storageKey: STORAGE_KEY, defaults: DEFAULT_UI_CONFIG },
+        );
+      },
     });
   },
   e2eClaimsFile: async ({}, use) => {
     await use(path.join(process.cwd(), "frontend", "claims", "e2e", "epoch-1.claims.json"));
+  },
+  e2eClaimsFileEpoch2: async ({}, use) => {
+    await use(path.join(process.cwd(), "frontend", "claims", "e2e", "epoch-2.claims.json"));
+  },
+  e2eMultiEpochManifest: async ({}, use) => {
+    await use("./claims/e2e/index.multi-epoch.json");
   },
 });
 

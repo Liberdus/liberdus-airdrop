@@ -66,10 +66,20 @@ async function resetLocalChain() {
   runNpmScript("fund:owner:local", ["--", "1000000"]);
 }
 
+async function createSnapshot(rpcUrl = RPC_URL) {
+  return rpcCall("evm_snapshot", [], rpcUrl);
+}
+
+async function revertSnapshot(snapshotId, rpcUrl = RPC_URL) {
+  return rpcCall("evm_revert", [snapshotId], rpcUrl);
+}
+
 module.exports = {
+  createSnapshot,
   REPO_ROOT,
   RPC_URL,
   resetLocalChain,
+  revertSnapshot,
   rpcCall,
   waitForRpc,
 };

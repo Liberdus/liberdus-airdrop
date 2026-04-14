@@ -17,8 +17,18 @@ async function setFutureDeadline(page, selector, minutesAhead = 90) {
   await page.locator(selector).fill(value);
 }
 
+async function startAirdropFromUpload(page, claimsFile, { deadlineSelector = "#startDeadlineInput" } = {}) {
+  await page.locator("#uploadClaimsFileInput").setInputFiles(claimsFile);
+  await setFutureDeadline(page, deadlineSelector);
+  await page.getByRole("button", { name: "Fund Contract" }).click();
+  await page.getByText("Fund airdrop complete.").waitFor();
+  await page.getByRole("button", { name: "Start New Airdrop" }).click();
+  await page.getByText("Start airdrop complete.").waitFor();
+}
+
 module.exports = {
   connectViaWalletPicker,
   openWalletMenu,
   setFutureDeadline,
+  startAirdropFromUpload,
 };
