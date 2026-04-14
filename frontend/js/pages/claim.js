@@ -26,6 +26,8 @@ import { loadClaimCatalog, fetchClaimSource, findClaimEntry, isMissingClaimSourc
 const runtime = {
   provider: null,
   providerSource: null,
+  readProvider: null,
+  readProviderKey: null,
   signer: null,
   account: null,
   chainId: null,
@@ -99,6 +101,16 @@ function clearMessage() {
     runtime.noticeTimerId = null;
   }
   toast.hide();
+}
+
+function ensureReadProvider() {
+  const providerKey = `${runtime.config.rpcUrl || ""}|${runtime.config.chainId || ""}`;
+  if (!runtime.readProvider || runtime.readProviderKey !== providerKey) {
+    runtime.readProvider = new ethers.JsonRpcProvider(runtime.config.rpcUrl, runtime.config.chainId);
+    runtime.readProviderKey = providerKey;
+  }
+
+  return runtime.readProvider;
 }
 
 const logger = { log: setMessage, clear: clearMessage };
@@ -252,18 +264,9 @@ function updateFooterLinks() {
 
 async function switchNetwork() {
   await switchConfiguredNetwork(runtime.config);
+  resetProvider(runtime, runtime.config.chainId);
   await refreshPage();
   logger.log(`Switched to ${runtime.config.networkName}.`, "success");
-}
-
-async function tryAutoSwitchAfterConnect() {
-  if (isReadyChain()) return;
-
-  try {
-    await switchConfiguredNetwork(runtime.config);
-  } catch (error) {
-    reportError(error, "Switch network");
-  }
 }
 
 function getVisibleRounds() {
@@ -281,7 +284,7 @@ function getVisibleRounds() {
 function getRoundActionMeta(round) {
   switch (round.status) {
     case "claimable":
-      return { label: isReadyChain() ? "Claim" : "Wrong Network", disabled: !isReadyChain() };
+      return { label: isReadyChain() ? "Claim" : "Switch Network to Claim", disabled: false };
     case "claimed":
       return { label: "Already Claimed", disabled: true };
     case "mismatch":
@@ -386,17 +389,16 @@ async function buildRoundView(source) {
   let errorMessage = "";
 
   try {
-    if (runtime.provider) {
-      const { airdrop } = getContracts({ config: runtime.config, provider: runtime.provider });
-      if (airdrop && epoch) {
-        [onchainRoot, deadline] = await Promise.all([
-          airdrop.merkleRoots(BigInt(epoch)),
-          airdrop.deadlines(BigInt(epoch)),
-        ]);
+    const readProvider = ensureReadProvider();
+    const { airdrop } = getContracts({ config: runtime.config, provider: readProvider });
+    if (airdrop && epoch) {
+      [onchainRoot, deadline] = await Promise.all([
+        airdrop.merkleRoots(BigInt(epoch)),
+        airdrop.deadlines(BigInt(epoch)),
+      ]);
 
-        if (entry) {
-          claimed = await airdrop.isClaimed(BigInt(epoch), BigInt(entry.index));
-        }
+      if (entry) {
+        claimed = await airdrop.isClaimed(BigInt(epoch), BigInt(entry.index));
       }
     }
   } catch (error) {
@@ -454,7 +456,7 @@ async function refreshPage() {
   try {
     const snapshot = await fetchDashboardSnapshot({
       config: runtime.config,
-      provider: runtime.provider,
+      provider: ensureReadProvider(),
       account: runtime.account,
     });
 
@@ -473,9 +475,20 @@ async function refreshPage() {
 }
 
 async function claimRound(roundEpoch) {
-  const round = getVisibleRounds().find((candidate) => candidate.epoch === roundEpoch);
+  let round = getVisibleRounds().find((candidate) => candidate.epoch === roundEpoch);
   if (!round || round.status !== "claimable" || !round.entry) {
     throw new Error("This claim is not available right now.");
+  }
+
+  if (!isReadyChain()) {
+    await switchConfiguredNetwork(runtime.config);
+    resetProvider(runtime, runtime.config.chainId);
+    await refreshPage();
+
+    round = getVisibleRounds().find((candidate) => candidate.epoch === roundEpoch);
+    if (!round || round.status !== "claimable" || !round.entry) {
+      throw new Error("This claim is not available right now.");
+    }
   }
 
   const { airdrop } = getContracts({
@@ -527,7 +540,6 @@ function bindEvents() {
       syncWalletButton();
       await connectWallet(runtime, selectedWalletId);
       await pageInitPromise;
-      await tryAutoSwitchAfterConnect();
       runtime.isConnectingWallet = false;
       syncWalletButton();
       logger.log("Wallet connected.", "success");
@@ -614,6 +626,8 @@ async function init() {
       const loaded = await loadUiConfig();
       runtime.config = loaded.config;
       runtime.configSource = loaded.source;
+      runtime.readProvider = null;
+      runtime.readProviderKey = null;
       await ensureProvider(runtime).catch(() => null);
       runtime.claimCatalog = await loadClaimCatalog(runtime.config.claimsManifestPath);
       await refreshPage();

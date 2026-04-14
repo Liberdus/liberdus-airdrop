@@ -8,7 +8,7 @@ export function getContracts({ config, provider, signer, withSigner = false }) {
   const dustTokenAddress = normalizeAddress(config.dustTokenAddress || "");
   const runner = withSigner ? signer : provider;
 
-  if (!runner) throw new Error("Wallet provider is not ready.");
+  if (!runner) throw new Error("Contract provider is not ready.");
 
   return {
     airdropAddress,
@@ -21,7 +21,7 @@ export function getContracts({ config, provider, signer, withSigner = false }) {
 }
 
 export async function fetchDashboardSnapshot({ config, provider, account }) {
-  if (!provider) throw new Error("Wallet provider is not ready.");
+  if (!provider) throw new Error("Contract provider is not ready.");
 
   const { airdrop, token, dustToken, airdropAddress } = getContracts({ config, provider });
   const snapshot = {
