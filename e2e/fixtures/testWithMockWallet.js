@@ -34,6 +34,7 @@ function installHardhatBackedWalletMock(config) {
   const ACCOUNT_STORAGE_KEY = "__liberdus_mock_wallet_account__";
   const CHAIN_STORAGE_KEY = "__liberdus_mock_wallet_chain__";
   const listenerMap = new Map();
+  const queuedFailures = new Map();
   const knownChains = new Set([String(config.chainId).toLowerCase()]);
   const globalWindow = window;
   let connected = localStorage.getItem(CONNECTED_STORAGE_KEY) === "true";
@@ -87,6 +88,27 @@ function installHardhatBackedWalletMock(config) {
     }
 
     return payload.result;
+  };
+
+  const buildMockError = (failure = {}, fallbackMethod = "wallet request") => {
+    const error = new Error(failure.message || `Mocked failure for ${fallbackMethod}`);
+    if (typeof failure.code === "number") error.code = failure.code;
+    if (failure.data !== undefined) error.data = failure.data;
+    if (failure.shortMessage) error.shortMessage = failure.shortMessage;
+    if (failure.reason) error.reason = failure.reason;
+    return error;
+  };
+
+  const maybeThrowQueuedFailure = (method) => {
+    const queue = queuedFailures.get(method);
+    if (!queue?.length) return;
+
+    const failure = queue.shift();
+    if (!queue.length) {
+      queuedFailures.delete(method);
+    }
+
+    throw buildMockError(failure, method);
   };
 
   class HardhatBackedEthereumProvider {
@@ -154,6 +176,8 @@ function installHardhatBackedWalletMock(config) {
         error.code = -32600;
         throw error;
       }
+
+      maybeThrowQueuedFailure(method);
 
       if (method === "eth_requestAccounts") {
         connected = true;
@@ -267,10 +291,18 @@ function installHardhatBackedWalletMock(config) {
         emit("accountsChanged", connected ? [currentAccount] : []);
         return connected;
       },
+      failNextRequest(method, failure) {
+        const normalizedMethod = String(method || "");
+        const queue = queuedFailures.get(normalizedMethod) || [];
+        queue.push(failure || {});
+        queuedFailures.set(normalizedMethod, queue);
+        return queue.length;
+      },
       reset() {
         connected = false;
         currentAccount = String(config.account).toLowerCase();
         currentChainId = String(config.chainId).toLowerCase();
+        queuedFailures.clear();
         persistState();
       },
     },
@@ -353,6 +385,12 @@ const test = base.extend({
       },
       async connect(page) {
         return page.evaluate(() => window.ethereum.request({ method: "eth_requestAccounts" }));
+      },
+      async failNextRequest(page, method, failure) {
+        return page.evaluate(
+          ({ nextMethod, nextFailure }) => window.__liberdusMockWallet.failNextRequest(nextMethod, nextFailure),
+          { nextMethod: method, nextFailure: failure },
+        );
       },
       async setUiConfig(page, overrides) {
         return page.evaluate(

@@ -38,3 +38,25 @@ test("claimant no longer sees a round after the owner disables it", async ({ pag
   await expect(page.getByText("Nothing available right now.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Claim" })).toHaveCount(0);
 });
+
+test("claimant no longer sees a round after its deadline passes on-chain", async ({ page, e2eClaimsFile, hardhatChain, mockWallet }) => {
+  await page.goto("admin.html");
+  await connectViaWalletPicker(page);
+
+  await startAirdropFromUpload(page, e2eClaimsFile, { deadlineSelector: "#startDeadlineInput" });
+  await mockWallet.setAccount(page, mockWallet.accounts.claimant);
+  await page.goto("index.html");
+
+  await expect(page.getByRole("button", { name: "Claim" })).toBeVisible();
+
+  await hardhatChain.rpcCall("evm_increaseTime", [2 * 60 * 60]);
+  await hardhatChain.rpcCall("evm_mine", []);
+  await page.addInitScript((offsetMs) => {
+    const originalDateNow = Date.now.bind(Date);
+    Date.now = () => originalDateNow() + offsetMs;
+  }, 2 * 60 * 60 * 1000);
+
+  await page.reload();
+  await expect(page.getByText("Nothing available right now.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Claim" })).toHaveCount(0);
+});

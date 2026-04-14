@@ -17,6 +17,20 @@ async function setFutureDeadline(page, selector, minutesAhead = 90) {
   await page.locator(selector).fill(value);
 }
 
+async function getLocalDateTimeInputValue(page, unixTimestamp) {
+  return page.evaluate((timestamp) => {
+    const target = new Date(Number(timestamp) * 1000);
+    const offsetMs = target.getTimezoneOffset() * 60 * 1000;
+    return new Date(target.getTime() - offsetMs).toISOString().slice(0, 16);
+  }, unixTimestamp);
+}
+
+async function getUtcDateTimeInputValue(page, unixTimestamp) {
+  return page.evaluate((timestamp) => {
+    return new Date(Number(timestamp) * 1000).toISOString().slice(0, 16);
+  }, unixTimestamp);
+}
+
 async function startAirdropFromUpload(page, claimsFile, { deadlineSelector = "#startDeadlineInput" } = {}) {
   await page.locator("#uploadClaimsFileInput").setInputFiles(claimsFile);
   await setFutureDeadline(page, deadlineSelector);
@@ -28,6 +42,8 @@ async function startAirdropFromUpload(page, claimsFile, { deadlineSelector = "#s
 
 module.exports = {
   connectViaWalletPicker,
+  getLocalDateTimeInputValue,
+  getUtcDateTimeInputValue,
   openWalletMenu,
   setFutureDeadline,
   startAirdropFromUpload,

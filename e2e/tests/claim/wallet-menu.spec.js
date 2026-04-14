@@ -33,3 +33,19 @@ test("connected claimant sees the generic empty state when no rounds have starte
   await expect(page.getByText("If anything is available for this wallet, it will appear here.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Claim" })).toHaveCount(0);
 });
+
+test("claimant footer can add the token to MetaMask and hides explorer link when explorerBaseUrl is unset", async ({ page, mockWallet }) => {
+  await page.goto("index.html");
+  await connectViaWalletPicker(page);
+
+  await expect(page.locator("#addTokenLink")).toBeVisible();
+  await expect(page.locator("#tokenExplorerLink")).toBeVisible();
+  await page.locator("#addTokenLink").click();
+  await expect(page.getByText("Token added to MetaMask.")).toBeVisible();
+
+  await mockWallet.setUiConfig(page, { explorerBaseUrl: "" });
+  await page.reload();
+
+  await expect(page.locator("#addTokenLink")).toBeVisible();
+  await expect(page.locator("#tokenExplorerLink")).toBeHidden();
+});
