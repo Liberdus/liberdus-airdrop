@@ -20,7 +20,7 @@ module.exports = defineConfig({
     {
       command: "npm run node",
       port: 8545,
-      reuseExistingServer: true,
+      reuseExistingServer: false,
       stdout: "pipe",
       stderr: "pipe",
       timeout: 120_000,
@@ -28,7 +28,7 @@ module.exports = defineConfig({
     {
       command: "node scripts/e2e/static-server.js",
       port: 4173,
-      reuseExistingServer: true,
+      reuseExistingServer: false,
       stdout: "pipe",
       stderr: "pipe",
       timeout: 30_000,

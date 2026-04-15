@@ -11,15 +11,20 @@ test("claimant sees an underfunded airdrop error when the contract balance is dr
   await page.getByRole("button", { name: "Withdraw" }).click();
   await expect(page.getByText("Withdraw complete.")).toBeVisible();
   await expect(page.locator("#airdropTokenBalance")).toContainText("115 LIB");
+  const availableBalance = (await page.locator("#airdropTokenBalance").textContent())?.trim();
 
   await mockWallet.setAccount(page, mockWallet.accounts.claimant);
   await page.goto("index.html");
 
   await expect(page.getByRole("button", { name: /0x7099\.\.\.79c8/i })).toBeVisible();
   await expect(page.getByRole("button", { name: "Claim" })).toBeVisible();
+  const claimAmount = (await page.locator(".round-amount").first().textContent())?.trim();
 
   await page.getByRole("button", { name: "Claim" }).click();
-  await expect(page.getByText(/The airdrop contract does not have enough LIB for this claim\./i)).toBeVisible();
+  await expect(page.locator("#claimToast")).toBeVisible();
+  await expect(page.locator("#claimToastMessage")).toHaveText(
+    `Claim: The airdrop contract does not have enough LIB for this claim. It has ${availableBalance}, but this claim needs ${claimAmount}. Fund the airdrop contract and try again.`,
+  );
   await expect(page.getByRole("button", { name: "Claim" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Already Claimed" })).toHaveCount(0);
 });
