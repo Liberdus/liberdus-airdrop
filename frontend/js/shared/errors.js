@@ -7,18 +7,19 @@ const KNOWN_ERROR_INTERFACES = [
   new ethers.Interface(ACCESS_CONTROL_ERROR_ABI),
   new ethers.Interface(ERC20_ERROR_ABI),
 ];
+const GENERIC_RPC_MESSAGES = new Set([
+  "(unknown custom error)",
+  "unknown custom error",
+  "execution reverted",
+  "could not decode result data",
+  "missing revert data",
+]);
+const CUSTOM_ERROR_NAME_PATTERN = /custom error '([A-Za-z0-9_]+)\([^)]*\)'/i;
+const RETURN_DATA_PATTERN = /return data:\s*(0x[0-9a-fA-F]+)/i;
+const ERC20_INSUFFICIENT_BALANCE_PATTERN = /ERC20InsufficientBalance\("?(0x[a-fA-F0-9]{40})"?,\s*(\d+),\s*(\d+)\)/;
+const ERC20_INSUFFICIENT_ALLOWANCE_PATTERN = /ERC20InsufficientAllowance\(/;
 
-function extractErrorCode(error) {
-  const candidates = [
-    error?.code,
-    error?.data?.code,
-    error?.data?.data?.code,
-    error?.error?.code,
-    error?.error?.error?.code,
-    error?.info?.error?.code,
-    error?.cause?.code,
-  ];
-
+function findFirstNumber(candidates) {
   for (const candidate of candidates) {
     if (typeof candidate === "number") return candidate;
   }
@@ -26,23 +27,37 @@ function extractErrorCode(error) {
   return null;
 }
 
-function isNetworkChangedError(error) {
-  const candidates = [
-    error?.message,
-    error?.shortMessage,
-    error?.reason,
-    error?.data?.message,
-    error?.data?.data?.message,
-    error?.cause?.message,
-  ];
+function extractErrorCode(error) {
+  return findFirstNumber([
+    error?.code,
+    error?.data?.code,
+    error?.data?.data?.code,
+    error?.error?.code,
+    error?.error?.error?.code,
+    error?.info?.error?.code,
+    error?.cause?.code,
+  ]);
+}
 
-  return candidates.some((candidate) => typeof candidate === "string" && /network changed:\s*\d+\s*=>\s*\d+/i.test(candidate));
+function isNetworkChangedError(error) {
+  return getMessageCandidates(error).some(
+    (candidate) => typeof candidate === "string" && /network changed:\s*\d+\s*=>\s*\d+/i.test(candidate),
+  );
 }
 
 function isHexData(value) {
   return typeof value === "string" && /^0x[0-9a-fA-F]*$/.test(value) && value.length >= 10;
 }
 
+function extractHexDataFromMessage(message) {
+  if (typeof message !== "string") return null;
+  const match = message.match(RETURN_DATA_PATTERN);
+  return match ? match[1] : null;
+}
+
+// Wallet providers, ethers, and browser runtimes wrap RPC failures differently.
+// Walk a bounded portion of the object graph so we can recover nested `message`
+// and `data` fields without coupling the UI to one exact wrapper shape.
 function collectNestedValues(root, key, limit = 24) {
   const results = [];
   const queue = [root];
@@ -66,8 +81,24 @@ function collectNestedValues(root, key, limit = 24) {
   return results;
 }
 
-function extractRevertData(error) {
-  const candidates = [
+// Prefer the common top-level fields first, then fall back to a bounded nested
+// scan for wrapper-specific placements.
+function getMessageCandidates(error) {
+  return [
+    error?.shortMessage,
+    error?.reason,
+    error?.data?.data?.message,
+    error?.data?.message,
+    error?.error?.message,
+    error?.error?.data?.message,
+    error?.info?.error?.message,
+    error?.cause?.message,
+    ...collectNestedValues(error, "message"),
+  ];
+}
+
+function getDataCandidates(error) {
+  return [
     error?.data?.data,
     error?.data?.data?.data,
     error?.data,
@@ -77,8 +108,13 @@ function extractRevertData(error) {
     error?.cause?.data,
     ...collectNestedValues(error, "data"),
   ];
+}
 
-  for (const candidate of candidates) {
+function extractRevertData(error) {
+  const dataCandidates = getDataCandidates(error);
+  const messageCandidates = getMessageCandidates(error).map(extractHexDataFromMessage);
+
+  for (const candidate of [...dataCandidates, ...messageCandidates]) {
     if (isHexData(candidate)) return candidate;
   }
 
@@ -101,31 +137,14 @@ function isGenericErrorMessage(message) {
   if (!message) return true;
 
   const normalized = String(message).trim().toLowerCase();
-  return normalized === "(unknown custom error)"
-    || normalized === "unknown custom error"
-    || normalized === "execution reverted"
-    || normalized === "could not decode result data"
-    || normalized === "missing revert data"
+  return GENERIC_RPC_MESSAGES.has(normalized)
     || normalized.startsWith("(unknown custom error)")
     || normalized.startsWith("unknown custom error")
     || normalized.startsWith("execution reverted");
 }
 
 function extractErrorMessage(error) {
-  const candidates = [
-    error?.shortMessage,
-    error?.reason,
-    error?.data?.data?.message,
-    error?.data?.message,
-    error?.error?.message,
-    error?.error?.data?.message,
-    error?.info?.error?.message,
-    error?.cause?.message,
-    ...collectNestedValues(error, "message"),
-    error?.message,
-  ];
-
-  for (const candidate of candidates) {
+  for (const candidate of getMessageCandidates(error)) {
     const cleaned = cleanRpcMessage(candidate);
     if (cleaned && !isGenericErrorMessage(cleaned)) return cleaned;
   }
@@ -133,26 +152,37 @@ function extractErrorMessage(error) {
   return "";
 }
 
-function decodeKnownError(error) {
-  const revertData = extractRevertData(error);
+function parseNamedCustomError(message) {
+  const customErrorMatch = String(message || "").match(CUSTOM_ERROR_NAME_PATTERN);
+  if (!customErrorMatch) return null;
 
-  if (revertData) {
-    for (const iface of KNOWN_ERROR_INTERFACES) {
-      try {
-        return iface.parseError(revertData);
-      } catch {
-        // Try the next interface.
-      }
+  return { name: customErrorMatch[1], args: [] };
+}
+
+// Try each ABI set until one recognizes the selector. `parseError()` returns
+// null when an ABI does not match, so only a truthy parsed error should end
+// the search.
+function parseKnownRevertData(revertData) {
+  if (!isHexData(revertData)) return null;
+
+  for (const iface of KNOWN_ERROR_INTERFACES) {
+    try {
+      const parsed = iface.parseError(revertData);
+      if (parsed) return parsed;
+    } catch {
+      // Try the next interface.
     }
   }
 
-  const message = extractErrorMessage(error);
-  const customErrorMatch = message.match(/custom error '([A-Za-z0-9_]+)\((.*)\)'/i);
-  if (customErrorMatch) {
-    return { name: customErrorMatch[1], args: [] };
-  }
-
   return null;
+}
+
+function decodeKnownError(error) {
+  return parseKnownRevertData(extractRevertData(error)) ?? parseNamedCustomError(extractErrorMessage(error));
+}
+
+function decodeKnownErrorFromMessage(message) {
+  return parseKnownRevertData(extractHexDataFromMessage(message)) ?? parseNamedCustomError(message);
 }
 
 function formatInsufficientBalanceMessage(sender, balance, needed, context, runtime) {
@@ -219,10 +249,17 @@ function formatDecodedError(decoded, context, runtime) {
   }
 }
 
-function formatMessagePatternError(message, context, runtime) {
+// Some providers flatten revert details into plain strings before the UI sees
+// them. Recover the important known cases here so users still get actionable
+// messages instead of provider-specific fallback text.
+function formatMessageFallbackError(message, context, runtime) {
   if (!message) return "";
 
-  const insufficientBalanceMatch = message.match(/ERC20InsufficientBalance\("?(0x[a-fA-F0-9]{40})"?,\s*(\d+),\s*(\d+)\)/);
+  const decoded = decodeKnownErrorFromMessage(message);
+  const decodedMessage = formatDecodedError(decoded, context, runtime);
+  if (decodedMessage) return decodedMessage;
+
+  const insufficientBalanceMatch = message.match(ERC20_INSUFFICIENT_BALANCE_PATTERN);
   if (insufficientBalanceMatch) {
     return formatInsufficientBalanceMessage(
       insufficientBalanceMatch[1],
@@ -233,8 +270,8 @@ function formatMessagePatternError(message, context, runtime) {
     );
   }
 
-  const insufficientAllowanceMatch = message.match(/ERC20InsufficientAllowance\("?(0x[a-fA-F0-9]{40})"?,\s*(\d+),\s*(\d+)\)/);
-  if (insufficientAllowanceMatch) {
+  const hasInsufficientAllowanceMessage = ERC20_INSUFFICIENT_ALLOWANCE_PATTERN.test(message);
+  if (hasInsufficientAllowanceMessage) {
     return "The token allowance is too low for this transfer.";
   }
 
@@ -245,6 +282,8 @@ function formatMessagePatternError(message, context, runtime) {
   return "";
 }
 
+// Prefer machine-readable wallet/RPC signals first, then decoded revert data,
+// and only fall back to raw strings when no structured path is available.
 export function formatUiError(error, context = "Action", runtime = {}) {
   const code = extractErrorCode(error);
   if (code === 4001) {
@@ -260,8 +299,8 @@ export function formatUiError(error, context = "Action", runtime = {}) {
   if (decodedMessage) return `${context}: ${decodedMessage}`;
 
   const message = extractErrorMessage(error);
-  const patternedMessage = formatMessagePatternError(message, context, runtime);
-  if (patternedMessage) return `${context}: ${patternedMessage}`;
+  const fallbackMessage = formatMessageFallbackError(message, context, runtime);
+  if (fallbackMessage) return `${context}: ${fallbackMessage}`;
   if (message) return `${context}: ${message}`;
 
   return `${context}: ${String(error)}`;
