@@ -43,6 +43,12 @@ function isHexData(value) {
   return typeof value === "string" && /^0x[0-9a-fA-F]*$/.test(value) && value.length >= 10;
 }
 
+function extractHexDataFromMessage(message) {
+  if (typeof message !== "string") return null;
+  const match = message.match(/return data:\s*(0x[0-9a-fA-F]+)/i);
+  return match ? match[1] : null;
+}
+
 function collectNestedValues(root, key, limit = 24) {
   const results = [];
   const queue = [root];
@@ -67,6 +73,19 @@ function collectNestedValues(root, key, limit = 24) {
 }
 
 function extractRevertData(error) {
+  const messageCandidates = [
+    error?.message,
+    error?.shortMessage,
+    error?.reason,
+    error?.data?.message,
+    error?.data?.data?.message,
+    error?.error?.message,
+    error?.error?.data?.message,
+    error?.info?.error?.message,
+    error?.cause?.message,
+    ...collectNestedValues(error, "message"),
+  ];
+
   const candidates = [
     error?.data?.data,
     error?.data?.data?.data,
@@ -76,6 +95,7 @@ function extractRevertData(error) {
     error?.info?.error?.data,
     error?.cause?.data,
     ...collectNestedValues(error, "data"),
+    ...messageCandidates.map((candidate) => extractHexDataFromMessage(candidate)),
   ];
 
   for (const candidate of candidates) {
