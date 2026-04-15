@@ -175,6 +175,26 @@ function decodeKnownError(error) {
   return null;
 }
 
+function decodeKnownErrorFromMessage(message) {
+  const revertData = extractHexDataFromMessage(message);
+  if (revertData) {
+    for (const iface of KNOWN_ERROR_INTERFACES) {
+      try {
+        return iface.parseError(revertData);
+      } catch {
+        // Try the next interface.
+      }
+    }
+  }
+
+  const customErrorMatch = String(message || "").match(/custom error '([A-Za-z0-9_]+)\((.*)\)'/i);
+  if (customErrorMatch) {
+    return { name: customErrorMatch[1], args: [] };
+  }
+
+  return null;
+}
+
 function formatInsufficientBalanceMessage(sender, balance, needed, context, runtime) {
   const tokenSymbol = runtime.tokenSymbol || "tokens";
   const tokenDecimals = runtime.tokenDecimals ?? 18;
@@ -241,6 +261,10 @@ function formatDecodedError(decoded, context, runtime) {
 
 function formatMessagePatternError(message, context, runtime) {
   if (!message) return "";
+
+  const decoded = decodeKnownErrorFromMessage(message);
+  const decodedMessage = formatDecodedError(decoded, context, runtime);
+  if (decodedMessage) return decodedMessage;
 
   const insufficientBalanceMatch = message.match(/ERC20InsufficientBalance\("?(0x[a-fA-F0-9]{40})"?,\s*(\d+),\s*(\d+)\)/);
   if (insufficientBalanceMatch) {
