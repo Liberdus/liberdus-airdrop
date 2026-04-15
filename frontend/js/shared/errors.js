@@ -159,7 +159,8 @@ function decodeKnownError(error) {
   if (revertData) {
     for (const iface of KNOWN_ERROR_INTERFACES) {
       try {
-        return iface.parseError(revertData);
+        const parsed = iface.parseError(revertData);
+        if (parsed) return parsed;
       } catch {
         // Try the next interface.
       }
@@ -180,7 +181,8 @@ function decodeKnownErrorFromMessage(message) {
   if (revertData) {
     for (const iface of KNOWN_ERROR_INTERFACES) {
       try {
-        return iface.parseError(revertData);
+        const parsed = iface.parseError(revertData);
+        if (parsed) return parsed;
       } catch {
         // Try the next interface.
       }
