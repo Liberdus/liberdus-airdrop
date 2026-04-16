@@ -21,7 +21,12 @@
     "followers:import": "node backend/import-x-followers.js",
     "recovery-candidates:import": "node backend/import-recovery-candidates.js",
     "recovery-submissions:import": "node backend/import-recovery-submissions.js",
-    "xauth:local": "node backend/server.js"
+    "xauth:local": "node backend/server.js",
+    "pm2:start": "pm2 start backend/pm2.config.cjs --update-env",
+    "pm2:restart": "pm2 restart backend/pm2.config.cjs --update-env",
+    "pm2:stop": "pm2 stop backend/pm2.config.cjs",
+    "pm2:delete": "pm2 delete backend/pm2.config.cjs",
+    "pm2:status": "pm2 status"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
@@ -31,6 +36,7 @@
   "dependencies": {
     "@openzeppelin/contracts": "^5.4.0",
     "better-sqlite3": "^12.9.0",
-    "csv-parse": "^6.2.1"
+    "csv-parse": "^6.2.1",
+    "pm2": "^6.0.14"
   }
 }

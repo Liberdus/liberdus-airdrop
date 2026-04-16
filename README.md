@@ -68,6 +68,8 @@ npm run verify:airdrop:bsc:mainnet
 
 The frontend lives in `frontend/` and is served without any frontend framework or build step.
 
+For server deployment, PM2, and SQLite account import instructions, see [SERVER_DEPLOYMENT.md](</C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/SERVER_DEPLOYMENT.md>).
+
 ```bash
 npm run node
 npm run deploy:local

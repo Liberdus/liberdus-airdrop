@@ -9,7 +9,7 @@ const { openDatabase, getDatabasePath } = require("./lib/db");
 const { loadAppConfig, requireChainConfig } = require("./lib/app-config");
 const { buildClaimRound } = require("./lib/claim-round");
 const { createAirdropRoundStore } = require("./lib/airdrop-round-store");
-const { verifyAirdropStartTransaction } = require("./lib/airdrop-chain");
+const { fetchAirdropOwner, verifyAirdropStartTransaction } = require("./lib/airdrop-chain");
 const { createAccountStore } = require("./lib/x-account-store");
 const { createRecoverySubmissionStore } = require("./lib/recovery-submission-store");
 
@@ -34,6 +34,7 @@ const AUTH_INIT_COOKIE_NAME = "liberdus_x_oauth_init";
 const AUTH_SESSION_TTL_MS = 15 * 60 * 1000;
 const REQUEST_TOKEN_TTL_MS = 10 * 60 * 1000;
 const CHALLENGE_TTL_MS = 10 * 60 * 1000;
+const ADMIN_FINALIZE_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const MAX_JSON_BODY_BYTES = 32 * 1024;
 const RATE_LIMITS = {
   start: { limit: 12, windowMs: 10 * 60 * 1000 },
@@ -45,6 +46,7 @@ const RATE_LIMITS = {
   walletClaims: { limit: 120, windowMs: 60 * 1000 },
   rounds: { limit: 120, windowMs: 60 * 1000 },
   claimLookup: { limit: 120, windowMs: 60 * 1000 },
+  adminChallenge: { limit: 20, windowMs: 10 * 60 * 1000 },
   finalizeRound: { limit: 20, windowMs: 10 * 60 * 1000 },
   health: { limit: 30, windowMs: 60 * 1000 },
 };
@@ -52,6 +54,7 @@ const RATE_LIMITS = {
 const authSessions = new Map();
 const requestTokens = new Map();
 const linkChallenges = new Map();
+const adminFinalizeChallenges = new Map();
 const rateLimits = new Map();
 
 class HttpError extends Error {
@@ -513,6 +516,12 @@ function pruneExpiredState() {
     }
   }
 
+  for (const [challengeId, challenge] of adminFinalizeChallenges.entries()) {
+    if (challenge.expiresAtMs <= now) {
+      adminFinalizeChallenges.delete(challengeId);
+    }
+  }
+
   for (const [key, bucket] of rateLimits.entries()) {
     if (bucket.resetAtMs <= now) {
       rateLimits.delete(key);
@@ -560,6 +569,15 @@ function requireWalletAddress(walletAddress) {
   } catch {
     throw new HttpError(400, "Wallet address is invalid.");
   }
+}
+
+function requireBytes32Hex(value, label) {
+  const normalized = String(value || "").trim();
+  if (!ethers.isHexString(normalized, 32)) {
+    throw new HttpError(400, `${label} must be a 32-byte hex string.`);
+  }
+
+  return normalized.toLowerCase();
 }
 
 function deleteAuthSession(sessionId) {
@@ -632,6 +650,32 @@ function buildWalletLinkMessage({ profile, walletAddress, challengeId, issuedAt 
     `Issued at: ${issuedAt}`,
     "",
     "Sign this message to prove wallet ownership for follower reward recovery.",
+  ].join("\n");
+}
+
+function buildAdminFinalizeMessage({
+  walletAddress,
+  txHash,
+  merkleRoot,
+  challengeId,
+  issuedAt,
+  chainId,
+  contractAddress,
+  deploymentKey,
+}) {
+  return [
+    "Liberdus admin airdrop finalize",
+    "",
+    `Wallet: ${walletAddress}`,
+    `Chain ID: ${chainId}`,
+    `Contract: ${contractAddress}`,
+    `Deployment key: ${deploymentKey}`,
+    `Transaction hash: ${txHash}`,
+    `Merkle root: ${merkleRoot}`,
+    `Challenge: ${challengeId}`,
+    `Issued at: ${issuedAt}`,
+    "",
+    "Sign this message to authorize saving the finalized airdrop round to the backend.",
   ].join("\n");
 }
 
@@ -780,6 +824,21 @@ function getRequiredDeploymentKey() {
   }
 
   return deploymentKey;
+}
+
+function getRequiredAdminChallenge(body) {
+  const challengeId = String(body?.challengeId || "").trim();
+  if (!challengeId) {
+    throw new HttpError(400, "Admin finalize request must include challengeId.");
+  }
+
+  pruneExpiredState();
+  const challenge = adminFinalizeChallenges.get(challengeId);
+  if (!challenge) {
+    throw new HttpError(400, "Admin finalize challenge expired. Start again.");
+  }
+
+  return challenge;
 }
 
 function getHealthPayload(request) {
@@ -1058,6 +1117,51 @@ async function handleClaimByEpochAndIndexLookup(response, epoch, claimIndex) {
   });
 }
 
+async function handleAdminFinalizeChallenge(request, response) {
+  const body = await readJsonRequest(request);
+  const walletAddress = requireWalletAddress(body.walletAddress);
+  const txHash = requireBytes32Hex(body.txHash, "Transaction hash");
+  const merkleRoot = requireBytes32Hex(body.merkleRoot, "Merkle root");
+  const chainConfig = requireChainConfig(appConfig);
+  const currentOwner = await fetchAirdropOwner(chainConfig);
+
+  if (ethers.getAddress(currentOwner) !== walletAddress) {
+    throw new HttpError(403, "Only the current contract owner can save finalized rounds.");
+  }
+
+  const challengeId = createRandomToken(18);
+  const issuedAt = new Date().toISOString();
+  const deploymentKey = getRequiredDeploymentKey();
+  const message = buildAdminFinalizeMessage({
+    walletAddress,
+    txHash,
+    merkleRoot,
+    challengeId,
+    issuedAt,
+    chainId: chainConfig.chainId,
+    contractAddress: chainConfig.airdropAddress,
+    deploymentKey,
+  });
+
+  adminFinalizeChallenges.set(challengeId, {
+    challengeId,
+    walletAddress,
+    txHash,
+    merkleRoot,
+    deploymentKey,
+    message,
+    issuedAt,
+    expiresAtMs: Date.now() + ADMIN_FINALIZE_CHALLENGE_TTL_MS,
+  });
+
+  writeJson(response, 200, {
+    challengeId,
+    message,
+    expiresAt: Date.now() + ADMIN_FINALIZE_CHALLENGE_TTL_MS,
+    walletAddress,
+  });
+}
+
 async function handleFinalizeAirdropRound(request, response) {
   const body = await readJsonRequest(request);
   const rawClaims = Array.isArray(body.claims)
@@ -1076,9 +1180,52 @@ async function handleFinalizeAirdropRound(request, response) {
     throw new HttpError(400, "Token decimals must be a non-negative integer.");
   }
 
+  const challenge = getRequiredAdminChallenge(body);
+  const signedWalletAddress = requireWalletAddress(body.walletAddress);
+  const signature = String(body.signature || "").trim();
+  const expectedTxHash = requireBytes32Hex(txHash, "Transaction hash");
+  if (!signature) {
+    throw new HttpError(400, "Admin finalize request must include a wallet signature.");
+  }
+
   const builtRound = buildClaimRound(rawClaims, decimals);
+  const expectedMerkleRoot = String(builtRound.root || "").trim().toLowerCase();
+
+  if (challenge.walletAddress !== signedWalletAddress) {
+    throw new HttpError(403, "Admin finalize challenge does not match the signing wallet.");
+  }
+
+  if (challenge.txHash !== expectedTxHash) {
+    throw new HttpError(400, "Admin finalize challenge does not match the transaction hash.");
+  }
+
+  if (challenge.merkleRoot !== expectedMerkleRoot) {
+    throw new HttpError(400, "Admin finalize challenge does not match the Merkle root.");
+  }
+
+  if (challenge.deploymentKey !== getRequiredDeploymentKey()) {
+    throw new HttpError(400, "Admin finalize challenge does not match the active deployment.");
+  }
+
+  let recoveredAddress;
+  try {
+    recoveredAddress = ethers.verifyMessage(challenge.message, signature);
+  } catch {
+    throw new HttpError(400, "Admin finalize signature is invalid.");
+  }
+
+  if (ethers.getAddress(recoveredAddress) !== signedWalletAddress) {
+    throw new HttpError(403, "Admin finalize signature did not match the supplied wallet.");
+  }
+
   const chainConfig = requireChainConfig(appConfig);
+  const currentOwner = await fetchAirdropOwner(chainConfig);
+  if (ethers.getAddress(currentOwner) !== signedWalletAddress) {
+    throw new HttpError(403, "Only the current contract owner can save finalized rounds.");
+  }
+
   const verifiedRound = await verifyAirdropStartTransaction(chainConfig, txHash, builtRound.root);
+  adminFinalizeChallenges.delete(challenge.challengeId);
   const savedRound = airdropRoundStore.upsertRound({
     deploymentKey: getRequiredDeploymentKey(),
     epoch: verifiedRound.epoch,
@@ -1339,6 +1486,13 @@ const server = http.createServer(async (request, response) => {
       requireAllowedOrigin(request, response);
       consumeRateLimit(request, "claimLookup");
       await handleClaimByEpochAndIndexLookup(response, claimLookupMatch[1], claimLookupMatch[2]);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/airdrop-rounds/challenge") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminChallenge");
+      await handleAdminFinalizeChallenge(request, response);
       return;
     }
 

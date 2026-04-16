@@ -3,6 +3,7 @@ const { ethers } = require("ethers");
 const AIRDROP_ABI = [
   "event AirdropStarted(uint256 indexed epoch, bytes32 indexed merkleRoot, uint256 deadline)",
   "function epochInfo(uint256) view returns (bytes32,uint256,uint256)",
+  "function owner() view returns (address)",
 ];
 
 function createAirdropProvider(appConfig) {
@@ -85,8 +86,16 @@ async function verifyAirdropStartTransaction(appConfig, txHash, expectedMerkleRo
   };
 }
 
+async function fetchAirdropOwner(appConfig) {
+  const provider = createAirdropProvider(appConfig);
+  const contract = createAirdropContract(appConfig, provider);
+  const owner = await contract.owner();
+  return ethers.getAddress(String(owner || "").trim());
+}
+
 module.exports = {
   createAirdropProvider,
+  fetchAirdropOwner,
   fetchEpochMetadata,
   verifyAirdropStartTransaction,
 };

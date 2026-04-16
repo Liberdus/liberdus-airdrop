@@ -33,6 +33,7 @@ import {
   fetchStoredClaimByEpochAndIndex,
   isClaimsApiConfigured,
   persistAirdropRound,
+  requestAirdropFinalizeChallenge,
 } from "../shared/claims.js";
 import { buildClaimRound } from "../shared/merkle.js";
 
@@ -1052,8 +1053,18 @@ async function startAirdropAndPersistRound() {
   logger.log(`Start airdrop: confirmed in block ${receipt.blockNumber}`, "success");
 
   try {
+    const finalizeChallenge = await requestAirdropFinalizeChallenge(runtime.config, {
+      walletAddress: runtime.account,
+      txHash: tx.hash,
+      merkleRoot: runtime.uploadedRound.root,
+    });
+    const finalizeSignature = await runtime.signer.signMessage(finalizeChallenge.message);
+
     const persisted = await persistAirdropRound(runtime.config, {
       txHash: tx.hash,
+      walletAddress: runtime.account,
+      challengeId: finalizeChallenge.challengeId,
+      signature: finalizeSignature,
       decimals: runtime.tokenDecimals,
       claims: runtime.uploadedRound.claims.map((claim) => ({
         index: claim.index,

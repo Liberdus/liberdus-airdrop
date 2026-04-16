@@ -95,6 +95,22 @@ export async function persistAirdropRound(config, payload) {
   });
 }
 
+export async function requestAirdropFinalizeChallenge(config, payload) {
+  const backendBaseUrl = getBackendBaseUrl(config);
+  if (!backendBaseUrl) {
+    throw new Error("Claim backend URL is not configured.");
+  }
+
+  return fetchBackendJson(`${backendBaseUrl}/api/admin/airdrop-rounds/challenge`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 export function normalizeClaimCatalog(rawCatalog) {
   const sourceRows = Array.isArray(rawCatalog)
     ? rawCatalog
