@@ -31,6 +31,8 @@ export async function loadUiConfig() {
 
   const savedOverrides = window.localStorage.getItem(STORAGE_KEY);
   const overrides = savedOverrides ? JSON.parse(savedOverrides) : {};
+  const loadedXAuth = loaded?.xAuth && typeof loaded.xAuth === "object" ? loaded.xAuth : {};
+  const overrideXAuth = overrides?.xAuth && typeof overrides.xAuth === "object" ? overrides.xAuth : {};
 
   const config = {
     claimsManifestPath: "./claims/index.json",
@@ -41,6 +43,11 @@ export async function loadUiConfig() {
     airdropAddress: normalizeAddress(overrides.airdropAddress || loaded.airdropAddress || ""),
     claimsManifestPath: String(overrides.claimsManifestPath || loaded.claimsManifestPath || "./claims/index.json"),
     explorerBaseUrl: String(overrides.explorerBaseUrl || loaded.explorerBaseUrl || "").trim(),
+    xAuth: {
+      enabled: overrideXAuth.enabled ?? loadedXAuth.enabled ?? true,
+      redirectUri: String(overrideXAuth.redirectUri || loadedXAuth.redirectUri || loaded.xRedirectUri || "").trim(),
+      backendUrl: String(overrideXAuth.backendUrl || loadedXAuth.backendUrl || loaded.xBackendUrl || "").trim(),
+    },
   };
 
   config.chainId = Number(config.chainId);

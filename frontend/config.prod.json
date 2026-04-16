@@ -9,6 +9,11 @@
     "decimals": 18
   },
   "claimsManifestPath": "./claims/index.json",
+  "xAuth": {
+    "enabled": true,
+    "redirectUri": "",
+    "backendUrl": ""
+  },
   "tokenAddress": "",
   "airdropAddress": ""
 }

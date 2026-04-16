@@ -15,7 +15,8 @@
     "verify:airdrop:bsc:mainnet": "hardhat run scripts/verify-airdrop.js --network bsc",
     "fund:owner:local": "hardhat fund-owner-wallet --network localhost",
     "merkle": "node scripts/generate-merkle.js",
-    "generate:test-claims": "node scripts/generate-test-claims.js --start-epoch 1"
+    "generate:test-claims": "node scripts/generate-test-claims.js --start-epoch 1",
+    "xauth:local": "node scripts/server.js"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

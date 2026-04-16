@@ -22,6 +22,16 @@ import {
 } from "../shared/wallet.js";
 import { promptForWalletSelection } from "../shared/wallet-picker.js";
 import { loadClaimCatalog, fetchClaimSource, findClaimEntry, isMissingClaimSourceError } from "../shared/claims.js";
+import {
+  getXSession,
+  clearXSession,
+  saveXSession,
+  isXAuthConfigured,
+  isXSessionExpired,
+  startXLogin,
+  logoutXSession,
+  completeXLoginIfPresent,
+} from "../shared/x-auth.js";
 
 const runtime = {
   provider: null,
@@ -38,13 +48,30 @@ const runtime = {
   selectedWalletRdns: null,
   owner: null,
   currentEpoch: 0,
-  config: { chainId: null, networkName: "", rpcUrl: "", nativeCurrency: null, tokenAddress: "", dustTokenAddress: "", airdropAddress: "", claimsManifestPath: "./claims/index.json" },
+  config: {
+    chainId: null,
+    networkName: "",
+    rpcUrl: "",
+    nativeCurrency: null,
+    tokenAddress: "",
+    dustTokenAddress: "",
+    airdropAddress: "",
+    claimsManifestPath: "./claims/index.json",
+    xAuth: {
+      enabled: true,
+      redirectUri: "",
+      backendUrl: "",
+    },
+  },
   configSource: "template",
   tokenDecimals: 18,
   tokenSymbol: "LIB",
   claimCatalog: null,
   rounds: [],
   isConnectingWallet: false,
+  isConnectingX: false,
+  isSubmittingXWalletLink: false,
+  xSession: null,
   noticeTimerId: null,
 };
 
@@ -64,6 +91,17 @@ const els = {
   claimToastMessage: document.getElementById("claimToastMessage"),
   claimToastClose: document.getElementById("claimToastClose"),
   switchNetworkButton: document.getElementById("switchNetworkButton"),
+  xAuthCard: document.getElementById("xAuthCard"),
+  xAuthHint: document.getElementById("xAuthHint"),
+  xAuthIdentity: document.getElementById("xAuthIdentity"),
+  xAuthAvatar: document.getElementById("xAuthAvatar"),
+  xAuthName: document.getElementById("xAuthName"),
+  xAuthProfileLink: document.getElementById("xAuthProfileLink"),
+  xAuthStatus: document.getElementById("xAuthStatus"),
+  xAuthLinkStatus: document.getElementById("xAuthLinkStatus"),
+  xAuthButton: document.getElementById("xAuthButton"),
+  xVerifyButton: document.getElementById("xVerifyButton"),
+  xDisconnectButton: document.getElementById("xDisconnectButton"),
 };
 
 const toast = createToastController({
@@ -127,6 +165,142 @@ function isReadyChain() {
   return runtime.chainId === runtime.config.chainId;
 }
 
+function hasAnyOnchainClaimEntry() {
+  return runtime.rounds.some((round) => {
+    if (!round.entry) return false;
+    return !["not-live", "mismatch", "error"].includes(round.status);
+  });
+}
+
+function shouldOfferXRecovery() {
+  if (!runtime.account) return false;
+  if (!runtime.claimCatalog?.sources?.length) return false;
+  return !hasAnyOnchainClaimEntry();
+}
+
+function formatXLinkStatus(linkResult) {
+  if (!linkResult) {
+    return "";
+  }
+
+  return "Thanks. We received your wallet and X account and will review it.";
+}
+
+function syncXSessionFromStorage() {
+  const session = getXSession();
+  if (session && isXSessionExpired(session)) {
+    clearXSession();
+    runtime.xSession = null;
+    return false;
+  }
+
+  runtime.xSession = session;
+  return Boolean(session);
+}
+
+function syncXAuthCard() {
+  if (!els.xAuthCard) return;
+
+  const xAuthEnabled = runtime.config?.xAuth?.enabled !== false && shouldOfferXRecovery();
+  els.xAuthCard.hidden = !xAuthEnabled;
+  if (!xAuthEnabled) return;
+
+  const isConfigured = isXAuthConfigured(runtime.config);
+  const profile = runtime.xSession?.profile || null;
+  const isSignedIn = Boolean(profile?.username);
+  const linkResult = runtime.xSession?.linkResult || null;
+  const hasLinkedWallet = Boolean(
+    linkResult
+    && runtime.account
+    && normalizeAddress(linkResult.walletAddress || "") === normalizeAddress(runtime.account),
+  );
+
+  els.xAuthIdentity.hidden = !isSignedIn;
+  els.xDisconnectButton.hidden = !isSignedIn;
+  els.xAuthButton.hidden = isSignedIn;
+  els.xVerifyButton.hidden = !isSignedIn;
+
+  if (isSignedIn) {
+    els.xAuthName.textContent = profile.name || `@${profile.username}`;
+    els.xAuthProfileLink.textContent = `@${profile.username}`;
+    els.xAuthProfileLink.href = `https://x.com/${encodeURIComponent(profile.username)}`;
+    els.xAuthProfileLink.hidden = false;
+    els.xAuthHint.textContent = "This X account can be linked to your connected wallet for follower recovery.";
+    els.xAuthStatus.textContent = "Signed in on x.com.";
+    els.xAuthStatus.dataset.tone = "";
+
+    if (profile.profileImageUrl) {
+      els.xAuthAvatar.src = profile.profileImageUrl;
+      els.xAuthAvatar.alt = `${profile.username} avatar`;
+      els.xAuthAvatar.hidden = false;
+    } else {
+      els.xAuthAvatar.hidden = true;
+      els.xAuthAvatar.removeAttribute("src");
+      els.xAuthAvatar.alt = "";
+    }
+
+    if (runtime.isSubmittingXWalletLink) {
+      els.xVerifyButton.textContent = "Verifying...";
+      els.xVerifyButton.disabled = true;
+      els.xAuthLinkStatus.hidden = false;
+      els.xAuthLinkStatus.textContent = "Confirm the wallet signature to save this recovery request.";
+      return;
+    }
+
+    if (hasLinkedWallet) {
+      const status = formatXLinkStatus(linkResult);
+      els.xVerifyButton.textContent = "Wallet Verified";
+      els.xVerifyButton.disabled = true;
+      els.xAuthLinkStatus.hidden = false;
+      els.xAuthLinkStatus.textContent = status;
+      return;
+    }
+
+    els.xVerifyButton.textContent = "Verify Wallet And Save";
+    els.xVerifyButton.disabled = !runtime.account || !runtime.signer;
+    els.xAuthLinkStatus.hidden = false;
+    els.xAuthLinkStatus.textContent = "Sign a wallet message to prove ownership and save your recovery request.";
+
+    return;
+  }
+
+  els.xAuthName.textContent = "-";
+  els.xAuthProfileLink.textContent = "@-";
+  els.xAuthProfileLink.href = "#";
+  els.xAuthProfileLink.hidden = true;
+  els.xAuthAvatar.hidden = true;
+  els.xAuthAvatar.removeAttribute("src");
+  els.xAuthAvatar.alt = "";
+  els.xVerifyButton.textContent = "Verify Wallet And Save";
+  els.xVerifyButton.disabled = true;
+  els.xAuthLinkStatus.hidden = true;
+  els.xAuthLinkStatus.textContent = "";
+
+  if (runtime.isConnectingX) {
+    els.xAuthHint.textContent = "Complete the X approval flow to return here.";
+    els.xAuthStatus.textContent = "Finishing X sign-in...";
+    els.xAuthStatus.dataset.tone = "";
+    els.xAuthButton.textContent = "Signing in...";
+    els.xAuthButton.disabled = true;
+    return;
+  }
+
+  if (!isConfigured) {
+    els.xAuthHint.textContent = "This deployment still needs the X auth backend and callback configured.";
+    els.xAuthStatus.textContent = "X sign-in is not configured yet.";
+    els.xAuthStatus.dataset.tone = "warn";
+    els.xAuthButton.textContent = "Sign in with X";
+    els.xAuthButton.disabled = true;
+    return;
+  }
+
+  els.xAuthHint.textContent = "No claim was found for this wallet. Sign in with X to start follower recovery.";
+  els.xAuthStatus.textContent = "Not signed in.";
+  els.xAuthStatus.dataset.tone = "";
+  els.xAuthButton.textContent = "Sign in with X";
+  els.xAuthButton.disabled = false;
+}
+
 function setWalletMenuOpen(isOpen) {
   if (!els.walletMenu || !els.connectButton || !runtime.account) {
     els.walletMenu?.setAttribute("hidden", "");
@@ -165,6 +339,92 @@ async function copyWalletAddress() {
   document.execCommand("copy");
   input.remove();
   logger.log("Wallet address copied.", "success");
+}
+
+async function postXBackend(path, payload) {
+  const baseUrl = String(runtime.config?.xAuth?.backendUrl || "").trim().replace(/\/+$/u, "");
+  if (!baseUrl) {
+    throw new Error("X sign-in backend URL is not configured.");
+  }
+
+  const csrfToken = String(runtime.xSession?.csrfToken || "").trim();
+  if (!csrfToken) {
+    throw new Error("X sign-in session expired. Sign in again.");
+  }
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await response.text();
+  let parsed = {};
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = { error: text };
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(parsed?.error || "Request failed.");
+  }
+
+  return parsed;
+}
+
+async function verifyWalletAndSaveRecovery() {
+  if (!runtime.account || !runtime.signer) {
+    throw new Error("Connect the wallet you want to recover first.");
+  }
+
+  if (!shouldOfferXRecovery()) {
+    throw new Error("Recovery is only available when this wallet has no claim entries.");
+  }
+
+  if (!runtime.xSession?.profile?.username || !runtime.xSession?.csrfToken) {
+    throw new Error("Sign in with X first.");
+  }
+
+  runtime.isSubmittingXWalletLink = true;
+  syncXAuthCard();
+
+  try {
+    const challenge = await postXBackend("/api/x/link/challenge", {
+      walletAddress: runtime.account,
+    });
+
+    if (!challenge?.challengeId || !challenge?.message) {
+      throw new Error("Recovery challenge was not created.");
+    }
+
+    const signature = await runtime.signer.signMessage(challenge.message);
+    const result = await postXBackend("/api/x/link/complete", {
+      challengeId: challenge.challengeId,
+      walletAddress: runtime.account,
+      signature,
+    });
+
+    runtime.xSession = {
+      ...runtime.xSession,
+      linkResult: result,
+    };
+    saveXSession(runtime.xSession);
+    syncXAuthCard();
+
+    const status = formatXLinkStatus(result);
+    logger.log(status, "success");
+  } finally {
+    runtime.isSubmittingXWalletLink = false;
+    syncXAuthCard();
+  }
 }
 
 async function addTokenToMetaMask() {
@@ -442,12 +702,14 @@ async function refreshRounds() {
   if (!runtime.claimCatalog?.sources?.length) {
     runtime.rounds = [];
     renderRoundList();
+    syncXAuthCard();
     return;
   }
 
   runtime.rounds = await Promise.all(runtime.claimCatalog.sources.map((source) => buildRoundView(source)));
 
   renderRoundList();
+  syncXAuthCard();
 }
 
 async function refreshPage() {
@@ -561,6 +823,37 @@ function bindEvents() {
     }
   });
 
+  els.xAuthButton?.addEventListener("click", async () => {
+    try {
+      runtime.isConnectingX = true;
+      syncXAuthCard();
+      await startXLogin(runtime.config);
+    } catch (error) {
+      runtime.isConnectingX = false;
+      syncXAuthCard();
+      reportError(error, "Start X sign-in");
+    }
+  });
+
+  els.xDisconnectButton?.addEventListener("click", async () => {
+    try {
+      await logoutXSession(runtime.config, runtime.xSession);
+      runtime.xSession = null;
+      syncXAuthCard();
+      logger.log("X account disconnected.");
+    } catch (error) {
+      reportError(error, "Disconnect X account");
+    }
+  });
+
+  els.xVerifyButton?.addEventListener("click", async () => {
+    try {
+      await verifyWalletAndSaveRecovery();
+    } catch (error) {
+      reportError(error, "Verify X recovery");
+    }
+  });
+
   els.switchNetworkButton?.addEventListener("click", async () => {
     try {
       await switchNetwork();
@@ -617,6 +910,8 @@ function bindEvents() {
 
 async function init() {
   renderRoundList();
+  syncXSessionFromStorage();
+  syncXAuthCard();
   bindEvents();
   updateToastOffset();
 
@@ -628,6 +923,23 @@ async function init() {
       runtime.configSource = loaded.source;
       runtime.readProvider = null;
       runtime.readProviderKey = null;
+      syncXSessionFromStorage();
+      syncXAuthCard();
+
+      try {
+        const xAuthResult = await completeXLoginIfPresent(runtime.config);
+        runtime.xSession = xAuthResult.session || runtime.xSession;
+        if (xAuthResult.handled) {
+          logger.log("X account connected.", "success");
+        }
+      } catch (error) {
+        clearXSession();
+        runtime.xSession = null;
+        reportError(error, "Complete X sign-in");
+      }
+
+      runtime.isConnectingX = false;
+      syncXAuthCard();
       await ensureProvider(runtime).catch(() => null);
       runtime.claimCatalog = await loadClaimCatalog(runtime.config.claimsManifestPath);
       await refreshPage();
