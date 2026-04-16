@@ -78,6 +78,56 @@ function initializeSchema(db) {
     CREATE INDEX idx_recovery_submissions_wallet_address
       ON recovery_submissions(wallet_address);
   `);
+
+  createAirdropSchema(db);
+}
+
+function createAirdropSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS airdrop_rounds (
+      id INTEGER PRIMARY KEY,
+      deployment_key TEXT NOT NULL,
+      epoch INTEGER NOT NULL,
+      merkle_root TEXT NOT NULL,
+      deadline INTEGER NOT NULL DEFAULT 0,
+      claim_count INTEGER NOT NULL DEFAULT 0,
+      total_amount_raw TEXT NOT NULL,
+      decimals INTEGER NOT NULL DEFAULT 18,
+      chain_id INTEGER NOT NULL,
+      contract_address TEXT NOT NULL,
+      source_kind TEXT NOT NULL DEFAULT 'manual',
+      start_tx_hash TEXT,
+      start_block_number INTEGER,
+      start_block_hash TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_airdrop_rounds_deployment_epoch
+      ON airdrop_rounds(deployment_key, epoch);
+
+    CREATE INDEX IF NOT EXISTS idx_airdrop_rounds_deployment_merkle_root
+      ON airdrop_rounds(deployment_key, LOWER(merkle_root));
+
+    CREATE INDEX IF NOT EXISTS idx_airdrop_rounds_deployment_contract_epoch
+      ON airdrop_rounds(deployment_key, LOWER(contract_address), epoch);
+
+    CREATE TABLE IF NOT EXISTS airdrop_claims (
+      round_id INTEGER NOT NULL REFERENCES airdrop_rounds(id) ON DELETE CASCADE,
+      claim_index INTEGER NOT NULL,
+      wallet_address TEXT NOT NULL,
+      amount_raw TEXT NOT NULL,
+      proof_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (round_id, claim_index)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_airdrop_claims_round_wallet
+      ON airdrop_claims(round_id, LOWER(wallet_address));
+
+    CREATE INDEX IF NOT EXISTS idx_airdrop_claims_wallet_lookup
+      ON airdrop_claims(LOWER(wallet_address));
+  `);
 }
 
 function dropKnownTablesAndIndexes(db) {
@@ -89,6 +139,17 @@ function dropKnownTablesAndIndexes(db) {
     DROP INDEX IF EXISTS idx_recovery_submissions_account_id;
     DROP INDEX IF EXISTS idx_recovery_submissions_x_user_id;
     DROP INDEX IF EXISTS idx_recovery_submissions_wallet_address;
+    DROP INDEX IF EXISTS idx_airdrop_rounds_merkle_root;
+    DROP INDEX IF EXISTS idx_airdrop_rounds_contract_epoch;
+    DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_epoch;
+    DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_merkle_root;
+    DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_contract_epoch;
+    DROP INDEX IF EXISTS idx_airdrop_claims_round_wallet;
+    DROP INDEX IF EXISTS idx_airdrop_claims_wallet_lookup;
+    DROP TABLE IF EXISTS airdrop_claims;
+    DROP TABLE IF EXISTS airdrop_rounds;
+    DROP TABLE IF EXISTS airdrop_claims_legacy;
+    DROP TABLE IF EXISTS airdrop_rounds_legacy;
     DROP TABLE IF EXISTS recovery_submissions;
     DROP TABLE IF EXISTS x_recovery_candidates;
     DROP TABLE IF EXISTS x_recovery_candidate_imports;
@@ -100,16 +161,42 @@ function dropKnownTablesAndIndexes(db) {
   `);
 }
 
+function tableExists(db, tableName) {
+  const row = db.prepare(`
+    SELECT name
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name = ?
+    LIMIT 1
+  `).get(tableName);
+
+  return Boolean(row);
+}
+
+function getTableColumnNames(db, tableName) {
+  if (!tableExists(db, tableName)) {
+    return [];
+  }
+
+  return db.prepare(`PRAGMA table_info(${tableName})`).all().map((row) => String(row.name || ""));
+}
+
 function hasCurrentSchema(db) {
   const tableNames = db.prepare(`
     SELECT name
     FROM sqlite_master
     WHERE type = 'table'
-      AND name IN ('x_accounts', 'recovery_submissions')
+      AND name IN ('x_accounts', 'recovery_submissions', 'airdrop_rounds', 'airdrop_claims')
     ORDER BY name
   `).all().map((row) => row.name);
 
-  return tableNames.includes("x_accounts") && tableNames.includes("recovery_submissions");
+  const airdropRoundColumns = getTableColumnNames(db, "airdrop_rounds");
+
+  return tableNames.includes("x_accounts")
+    && tableNames.includes("recovery_submissions")
+    && tableNames.includes("airdrop_rounds")
+    && tableNames.includes("airdrop_claims")
+    && airdropRoundColumns.includes("deployment_key");
 }
 
 function resetToCurrentSchema(db) {
@@ -119,16 +206,12 @@ function resetToCurrentSchema(db) {
 }
 
 function migrateSchema(db) {
-  const transaction = db.transaction(() => {
-    if (hasCurrentSchema(db)) {
-      setSchemaVersion(db, BASE_SCHEMA_VERSION);
-      return;
-    }
+  if (hasCurrentSchema(db)) {
+    setSchemaVersion(db, BASE_SCHEMA_VERSION);
+    return;
+  }
 
-    resetToCurrentSchema(db);
-  });
-
-  transaction();
+  resetToCurrentSchema(db);
 }
 
 function openDatabase() {

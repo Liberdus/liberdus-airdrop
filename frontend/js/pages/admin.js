@@ -28,7 +28,12 @@ import {
   getAvailableWallets,
 } from "../shared/wallet.js";
 import { promptForWalletSelection } from "../shared/wallet-picker.js";
-import { loadClaimCatalog, fetchClaimSource } from "../shared/claims.js";
+import {
+  fetchStoredAirdropRounds,
+  fetchStoredClaimByEpochAndIndex,
+  isClaimsApiConfigured,
+  persistAirdropRound,
+} from "../shared/claims.js";
 import { buildClaimRound } from "../shared/merkle.js";
 
 const runtime = {
@@ -45,13 +50,22 @@ const runtime = {
   pendingOwner: null,
   currentEpoch: 0,
   epochRows: [],
-  claimCatalog: null,
   claimSourcesByEpoch: new Map(),
   claimSourcesByRoot: new Map(),
   uploadedRound: null,
   builderRows: [],
   nextBuilderRowId: 1,
-  config: { chainId: null, networkName: "", rpcUrl: "", nativeCurrency: null, tokenAddress: "", dustTokenAddress: "", airdropAddress: "", claimsManifestPath: "./claims/index.json" },
+  config: {
+    chainId: null,
+    networkName: "",
+    rpcUrl: "",
+    nativeCurrency: null,
+    tokenAddress: "",
+    dustTokenAddress: "",
+    airdropAddress: "",
+    apiBaseUrl: "",
+    claimsManifestPath: "./claims/index.json",
+  },
   configSource: "template",
   tokenDecimals: 18,
   tokenSymbol: "LIB",
@@ -516,7 +530,13 @@ function updateStartAirdropButtonState() {
   const hasRound = Boolean(runtime.uploadedRound);
   const hasRoot = ethers.isHexString(els.startRootInput.value.trim(), 32);
   const hasDeadline = Number.isFinite(Number(els.startDeadlineUnix.value)) && Number(els.startDeadlineUnix.value) > 0;
-  const canSubmit = isOwner() && isReadyChain() && hasRound && hasRoot && hasDeadline && !runtime.startRequiresNewUpload;
+  const canSubmit = isOwner()
+    && isReadyChain()
+    && isClaimsApiConfigured(runtime.config)
+    && hasRound
+    && hasRoot
+    && hasDeadline
+    && !runtime.startRequiresNewUpload;
   els.startAirdropButton.disabled = !canSubmit;
   updateStartRootWarning();
 }
@@ -731,24 +751,16 @@ async function refreshCatalogRounds() {
   runtime.claimSourcesByEpoch = new Map();
   runtime.claimSourcesByRoot = new Map();
 
-  if (!runtime.config.claimsManifestPath) return;
+  if (!isClaimsApiConfigured(runtime.config)) return;
 
-  runtime.claimCatalog = await loadClaimCatalog(runtime.config.claimsManifestPath);
-  if (!runtime.claimCatalog?.sources?.length) return;
+  const payload = await fetchStoredAirdropRounds(runtime.config);
+  const rounds = Array.isArray(payload?.rounds) ? payload.rounds : [];
 
-  const roundEntries = await Promise.all(runtime.claimCatalog.sources.map(async (source) => {
-    try {
-      const round = await fetchClaimSource(source, runtime.claimCatalog.baseUrl, runtime.tokenDecimals);
-      return { epoch: source.epoch, source, round, errorMessage: "" };
-    } catch (error) {
-      return { epoch: source.epoch, source, round: null, errorMessage: formatUiError(error, "Load round data", runtime) };
-    }
-  }));
-
-  for (const entry of roundEntries) {
-    runtime.claimSourcesByEpoch.set(entry.epoch, entry);
-    if (entry.round?.root) {
-      runtime.claimSourcesByRoot.set(entry.round.root.toLowerCase(), entry);
+  for (const round of rounds) {
+    const entry = { epoch: round.epoch, source: null, round, errorMessage: "" };
+    runtime.claimSourcesByEpoch.set(round.epoch, entry);
+    if (round?.merkleRoot) {
+      runtime.claimSourcesByRoot.set(round.merkleRoot.toLowerCase(), entry);
     }
   }
 }
@@ -842,7 +854,7 @@ async function refreshEpochRows() {
         || runtime.claimSourcesByRoot.get(root.toLowerCase())
         || null;
       const localRound = localSource?.round;
-      const totalAmountRaw = localRound && localRound.root.toLowerCase() === root.toLowerCase()
+      const totalAmountRaw = localRound && localRound.merkleRoot.toLowerCase() === root.toLowerCase()
         ? BigInt(localRound.totalAmountRaw)
         : null;
 
@@ -1004,6 +1016,67 @@ async function fundUploadedRound() {
     },
     formatError: (error, label) => formatUiError(error, label, runtime),
   });
+}
+
+async function startAirdropAndPersistRound() {
+  if (!runtime.uploadedRound) {
+    throw new Error("Prepare a claims JSON file first.");
+  }
+
+  if (!isClaimsApiConfigured(runtime.config)) {
+    throw new Error("Backend API URL is not configured.");
+  }
+
+  const { airdrop } = getContracts({
+    config: runtime.config,
+    provider: runtime.provider,
+    signer: runtime.signer,
+    withSigner: true,
+  });
+
+  if (!airdrop) {
+    throw new Error("Airdrop address is not configured.");
+  }
+
+  const root = els.startRootInput.value.trim();
+  if (!ethers.isHexString(root, 32)) {
+    throw new Error("Merkle root must be a bytes32 hex string.");
+  }
+
+  const deadlineUnix = Number(els.startDeadlineUnix.value);
+  await validateFutureDeadlineAgainstChain(deadlineUnix);
+
+  const tx = await airdrop.startNewAirdrop(root, deadlineUnix);
+  logger.log(`Start airdrop: submitted ${tx.hash}`);
+  const receipt = await tx.wait();
+  logger.log(`Start airdrop: confirmed in block ${receipt.blockNumber}`, "success");
+
+  try {
+    const persisted = await persistAirdropRound(runtime.config, {
+      txHash: tx.hash,
+      decimals: runtime.tokenDecimals,
+      claims: runtime.uploadedRound.claims.map((claim) => ({
+        index: claim.index,
+        account: claim.account,
+        amountRaw: claim.amountRaw,
+      })),
+    });
+
+    runtime.startRequiresNewUpload = true;
+    await refreshPage();
+    updateStartAirdropButtonState();
+
+    if (persisted?.round?.epoch) {
+      logger.log(`Round ${persisted.round.epoch} saved to the backend.`, "success");
+    }
+  } catch (error) {
+    runtime.startRequiresNewUpload = true;
+    await refreshPage().catch(() => {});
+    updateStartAirdropButtonState();
+    throw new Error(
+      `Airdrop was started on chain, but saving the round to the backend failed. ${error?.message || String(error)}`,
+    );
+  }
 }
 
 async function updateEpochDeadline(newDeadline) {
@@ -1258,31 +1331,7 @@ function bindEvents() {
   els.startAirdropForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      if (!runtime.uploadedRound) throw new Error("Prepare a claims JSON file first.");
-
-      const { airdrop } = getContracts({
-        config: runtime.config,
-        provider: runtime.provider,
-        signer: runtime.signer,
-        withSigner: true,
-      });
-
-      if (!airdrop) throw new Error("Airdrop address is not configured.");
-      const root = els.startRootInput.value.trim();
-      if (!ethers.isHexString(root, 32)) throw new Error("Merkle root must be a bytes32 hex string.");
-
-      const deadlineUnix = Number(els.startDeadlineUnix.value);
-      await validateFutureDeadlineAgainstChain(deadlineUnix);
-
-      await sendTransaction("Start airdrop", () => airdrop.startNewAirdrop(root, deadlineUnix), {
-        log: logger.log,
-        afterSuccess: async () => {
-          runtime.startRequiresNewUpload = true;
-          await refreshPage();
-          updateStartAirdropButtonState();
-        },
-        formatError: (error, label) => formatUiError(error, label, runtime),
-      });
+      await startAirdropAndPersistRound();
     } catch (error) {
       reportError(error, "Start airdrop");
     }
@@ -1417,7 +1466,7 @@ function bindEvents() {
       const epoch = readRequiredEpoch(els.queryEpochInput, "Epoch query");
       const [root, deadline, claimedAmount] = await airdrop.epochInfo(epoch);
       const localRound = runtime.claimSourcesByEpoch.get(Number(epoch))?.round;
-      const totalAmountRaw = localRound && localRound.root.toLowerCase() === root.toLowerCase()
+      const totalAmountRaw = localRound && localRound.merkleRoot.toLowerCase() === root.toLowerCase()
         ? localRound.totalAmountRaw
         : null;
 
@@ -1452,14 +1501,15 @@ function bindEvents() {
       if (index < 0n) throw new Error("Claim status index must be zero or greater.");
 
       const claimed = await airdrop.isClaimed(epoch, index);
-      const localSource = runtime.claimSourcesByEpoch.get(Number(epoch));
-      const localClaim = localSource?.round?.claims?.find((claim) => BigInt(claim.index) === index) || null;
+      const localClaim = isClaimsApiConfigured(runtime.config)
+        ? await fetchStoredClaimByEpochAndIndex(runtime.config, epoch.toString(), index.toString()).catch(() => null)
+        : null;
       els.claimStatusResult.textContent = JSON.stringify(
         {
           epoch: epoch.toString(),
           index: index.toString(),
-          account: localClaim?.account || null,
-          amount: localClaim?.amount || null,
+          account: localClaim?.entry?.account || null,
+          amountRaw: localClaim?.entry?.amountRaw || null,
           claimed,
         },
         null,

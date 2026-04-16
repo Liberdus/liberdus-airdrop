@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const hre = require("hardhat");
@@ -53,6 +54,7 @@ async function main() {
     tokenAddress: await token.getAddress(),
     dustTokenAddress: await dustToken.getAddress(),
     airdropAddress: await airdrop.getAddress(),
+    deploymentKey: `local:${crypto.randomUUID()}`,
     generatedAt: new Date().toISOString(),
   };
 
@@ -71,6 +73,7 @@ async function main() {
   console.log(`Token:       ${config.tokenAddress}`);
   console.log(`Dust token:  ${config.dustTokenAddress}`);
   console.log(`Airdrop:     ${config.airdropAddress}`);
+  console.log(`Deployment key: ${config.deploymentKey}`);
   console.log(`Frontend config: ${configLocalPath}`);
 }
 

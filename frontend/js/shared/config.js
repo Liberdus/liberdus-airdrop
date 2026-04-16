@@ -36,17 +36,35 @@ export async function loadUiConfig() {
 
   const config = {
     claimsManifestPath: "./claims/index.json",
+    apiBaseUrl: "",
+    deploymentKey: "",
     ...loaded,
     ...overrides,
     tokenAddress: normalizeAddress(overrides.tokenAddress || loaded.tokenAddress || ""),
     dustTokenAddress: normalizeAddress(overrides.dustTokenAddress || loaded.dustTokenAddress || ""),
     airdropAddress: normalizeAddress(overrides.airdropAddress || loaded.airdropAddress || ""),
     claimsManifestPath: String(overrides.claimsManifestPath || loaded.claimsManifestPath || "./claims/index.json"),
+    apiBaseUrl: String(
+      overrides.apiBaseUrl
+      || loaded.apiBaseUrl
+      || overrideXAuth.backendUrl
+      || loadedXAuth.backendUrl
+      || loaded.xBackendUrl
+      || ""
+    ).trim(),
+    deploymentKey: String(loaded.deploymentKey || "").trim(),
     explorerBaseUrl: String(overrides.explorerBaseUrl || loaded.explorerBaseUrl || "").trim(),
     xAuth: {
       enabled: overrideXAuth.enabled ?? loadedXAuth.enabled ?? true,
       redirectUri: String(overrideXAuth.redirectUri || loadedXAuth.redirectUri || loaded.xRedirectUri || "").trim(),
-      backendUrl: String(overrideXAuth.backendUrl || loadedXAuth.backendUrl || loaded.xBackendUrl || "").trim(),
+      backendUrl: String(
+        overrideXAuth.backendUrl
+        || loadedXAuth.backendUrl
+        || overrides.apiBaseUrl
+        || loaded.apiBaseUrl
+        || loaded.xBackendUrl
+        || ""
+      ).trim(),
     },
   };
 
@@ -74,6 +92,7 @@ export function saveAddressOverrides(overrides) {
       tokenAddress: normalizeAddress(overrides.tokenAddress || ""),
       dustTokenAddress: normalizeAddress(overrides.dustTokenAddress || ""),
       claimsManifestPath: String(overrides.claimsManifestPath || "./claims/index.json"),
+      apiBaseUrl: String(overrides.apiBaseUrl || "").trim(),
     }),
   );
 }

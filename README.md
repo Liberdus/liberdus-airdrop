@@ -75,6 +75,7 @@ npm run fund:owner:local
 ```
 
 `npm run deploy:local` writes `frontend/config.local.json` with the current local deployment addresses used by the frontend.
+It also writes a fresh `deploymentKey` each time so local Hardhat resets and redeploys do not collide with older airdrop rounds stored in SQLite.
 
 For hosted deployments, the frontend reads `frontend/config.json`. Publish the right config file before deploying:
 
@@ -90,12 +91,13 @@ Serve the repo with any static file server, then open:
 - `/frontend/index.html` for the claimant page
 - `/frontend/admin.html` for the owner-only admin page
 
-Hosted claim rounds are listed in `frontend/claims/index.json`. Each entry points at the raw claims JSON for one epoch. The claimant page loads those raw files, computes the Merkle tree in the browser, and generates proofs client-side.
+Claim rounds now live in the backend SQLite database. The claim page reads wallet-specific proofs from the backend, and the admin page saves newly started rounds into that database after the `startNewAirdrop` transaction confirms on chain.
 
 The claimant page also supports X sign-in through the `xAuth` block in each frontend config file:
 
 ```json
 {
+  "apiBaseUrl": "https://your-backend.example",
   "xAuth": {
     "enabled": true,
     "redirectUri": "https://your-site.example/frontend/index.html",
@@ -133,6 +135,12 @@ X_AUTH_ALLOWED_ORIGINS=http://127.0.0.1:5502
 X_AUTH_COOKIE_SECURE=auto
 X_AUTH_TRUST_PROXY=false
 LIBERDUS_DB_PATH=data/liberdus.sqlite
+LIBERDUS_CHAIN_ID=1337
+LIBERDUS_RPC_URL=http://127.0.0.1:8545
+LIBERDUS_AIRDROP_ADDRESS=
+LIBERDUS_DEPLOYMENT_KEY=
+LIBERDUS_CLAIMS_MANIFEST=frontend/claims/generated/index.json
+LIBERDUS_TOKEN_DECIMALS=18
 X_FOLLOWER_SNAPSHOT_FILE=cache/x/liberdus-followers.json
 X_RECOVERY_CANDIDATES_FILE=cache/x/missing-address-usernames.json
 # Legacy import source for pre-SQLite recovery submissions.
@@ -143,6 +151,8 @@ Then set local frontend config like:
 
 ```json
 {
+  "apiBaseUrl": "http://127.0.0.1:8787",
+  "deploymentKey": "local:your-current-deploy-id",
   "xAuth": {
     "enabled": true,
     "redirectUri": "http://127.0.0.1:5502/frontend/",
@@ -177,6 +187,20 @@ npm run recovery-submissions:import
 
 That command reads `X_RECOVERY_STORE_FILE` as a legacy import source and writes those rows into `recovery_submissions`.
 
+To seed the DB with the existing file-backed claim rounds once, run:
+
+```bash
+npm run claim-rounds:import
+```
+
+That command reads `LIBERDUS_CLAIMS_MANIFEST`, rebuilds each round server-side, and stores finalized proofs in `airdrop_rounds` / `airdrop_claims`. If the imported root matches the live on-chain epoch, the importer also stores the current deadline from chain.
+
+Round identity is now namespaced by `deploymentKey`. The backend stores rounds under `(deploymentKey, epoch)`, so:
+
+- production/test deployments can keep a stable key, such as `chainId:contractAddress`
+- local deployments should use a fresh key every time `npm run deploy:local` runs
+- old rounds and claims can stay in SQLite for history, but they will not leak into the current deployment once the key changes
+
 The local auth server:
 
 - starts the OAuth 1.0a request-token flow server-side
@@ -193,6 +217,7 @@ The local auth server:
 - reads follower matches from the `x_accounts` table in `LIBERDUS_DB_PATH`
 - reads recovery-candidate flags from the `x_accounts` table in `LIBERDUS_DB_PATH`
 - stores recovery proof submissions in the `recovery_submissions` table in `LIBERDUS_DB_PATH`
+- stores finalized airdrop rounds in `airdrop_rounds` / `airdrop_claims` in `LIBERDUS_DB_PATH`
 - flags whether the username matched:
   - the imported follower snapshot data in `LIBERDUS_DB_PATH`
   - the latest imported recovery-candidate set in `LIBERDUS_DB_PATH`

@@ -3,6 +3,7 @@ const path = require("node:path");
 const dotenv = require("dotenv");
 
 const { openDatabase, resolveRepoPath } = require("./lib/db");
+const { loadAppConfig } = require("./lib/app-config");
 const { createAccountStore } = require("./lib/x-account-store");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
@@ -52,6 +53,7 @@ function parseArgs(argv) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
+  const appConfig = loadAppConfig();
   const db = openDatabase();
   const accountStore = createAccountStore(db);
   const resolvedFilePath = resolveRepoPath(options.filePath);

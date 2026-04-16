@@ -21,7 +21,7 @@ import {
   getAvailableWallets,
 } from "../shared/wallet.js";
 import { promptForWalletSelection } from "../shared/wallet-picker.js";
-import { loadClaimCatalog, fetchClaimSource, findClaimEntry, isMissingClaimSourceError } from "../shared/claims.js";
+import { fetchWalletClaimRounds, isClaimsApiConfigured } from "../shared/claims.js";
 import {
   getXSession,
   clearXSession,
@@ -56,6 +56,7 @@ const runtime = {
     tokenAddress: "",
     dustTokenAddress: "",
     airdropAddress: "",
+    apiBaseUrl: "",
     claimsManifestPath: "./claims/index.json",
     xAuth: {
       enabled: true,
@@ -66,7 +67,6 @@ const runtime = {
   configSource: "template",
   tokenDecimals: 18,
   tokenSymbol: "LIB",
-  claimCatalog: null,
   rounds: [],
   isConnectingWallet: false,
   isConnectingX: false,
@@ -173,7 +173,7 @@ function hasAnyOnchainClaimEntry() {
 
 function shouldOfferXRecovery() {
   if (!runtime.account) return false;
-  if (!runtime.claimCatalog?.sources?.length) return false;
+  if (!isClaimsApiConfigured(runtime.config)) return false;
   return !hasAnyOnchainClaimEntry();
 }
 
@@ -674,37 +674,10 @@ function renderRoundList() {
   });
 }
 
-async function buildRoundView(source) {
-  let artifact;
-  try {
-    artifact = await fetchClaimSource(source, runtime.claimCatalog.baseUrl, runtime.tokenDecimals);
-  } catch (error) {
-    if (isMissingClaimSourceError(error)) {
-      console.warn(
-        `[Claims] Claim file not found for epoch ${source.epoch}: ${source.file}`,
-        error,
-      );
-
-      return {
-        source,
-        artifact: null,
-        entry: null,
-        epoch: source.epoch,
-        amountRaw: 0n,
-        onchainRoot: ethers.ZeroHash,
-        deadline: 0n,
-        claimed: false,
-        status: "error",
-        errorMessage: "",
-      };
-    }
-
-    throw error;
-  }
-
-  const entry = runtime.account ? findClaimEntry(artifact, runtime.account) : null;
+async function buildRoundView(storedRound) {
+  const entry = storedRound?.entry || null;
   const amountRaw = entry ? BigInt(entry.amountRaw) : 0n;
-  const epoch = source.epoch;
+  const epoch = Number(storedRound?.epoch || 0);
 
   let onchainRoot = ethers.ZeroHash;
   let deadline = 0n;
@@ -733,7 +706,7 @@ async function buildRoundView(source) {
     status = "error";
   } else if (!epoch || !onchainRoot || onchainRoot === ethers.ZeroHash) {
     status = "not-live";
-  } else if (String(artifact.root || "").toLowerCase() !== onchainRoot.toLowerCase()) {
+  } else if (String(storedRound?.merkleRoot || "").toLowerCase() !== onchainRoot.toLowerCase()) {
     status = "mismatch";
   } else if (deadline === 0n || BigInt(Math.floor(Date.now() / 1000)) >= deadline) {
     status = "closed";
@@ -748,8 +721,8 @@ async function buildRoundView(source) {
   }
 
   return {
-    source,
-    artifact,
+    source: { epoch },
+    artifact: storedRound,
     entry,
     epoch,
     amountRaw,
@@ -762,14 +735,16 @@ async function buildRoundView(source) {
 }
 
 async function refreshRounds() {
-  if (!runtime.claimCatalog?.sources?.length) {
+  if (!runtime.account || !isClaimsApiConfigured(runtime.config)) {
     runtime.rounds = [];
     renderRoundList();
     syncXAuthCard();
     return;
   }
 
-  runtime.rounds = await Promise.all(runtime.claimCatalog.sources.map((source) => buildRoundView(source)));
+  const payload = await fetchWalletClaimRounds(runtime.config, runtime.account);
+  const storedRounds = Array.isArray(payload?.rounds) ? payload.rounds : [];
+  runtime.rounds = await Promise.all(storedRounds.map((round) => buildRoundView(round)));
 
   renderRoundList();
   syncXAuthCard();
@@ -1004,7 +979,6 @@ async function init() {
       runtime.isConnectingX = false;
       syncXAuthCard();
       await ensureProvider(runtime).catch(() => null);
-      runtime.claimCatalog = await loadClaimCatalog(runtime.config.claimsManifestPath);
       await refreshPage();
     } catch (error) {
       reportError(error, "Initialize claimant page");

@@ -8,6 +8,8 @@
     "symbol": "ETH",
     "decimals": 18
   },
+  "apiBaseUrl": "http://127.0.0.1:8787",
+  "deploymentKey": "",
   "claimsManifestPath": "./claims/generated/index.json",
   "xAuth": {
     "enabled": true,

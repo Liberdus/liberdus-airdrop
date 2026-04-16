@@ -6,6 +6,10 @@ const path = require("node:path");
 const dotenv = require("dotenv");
 const { ethers } = require("ethers");
 const { openDatabase, getDatabasePath } = require("./lib/db");
+const { loadAppConfig, requireChainConfig } = require("./lib/app-config");
+const { buildClaimRound } = require("./lib/claim-round");
+const { createAirdropRoundStore } = require("./lib/airdrop-round-store");
+const { verifyAirdropStartTransaction } = require("./lib/airdrop-chain");
 const { createAccountStore } = require("./lib/x-account-store");
 const { createRecoverySubmissionStore } = require("./lib/recovery-submission-store");
 
@@ -38,6 +42,10 @@ const RATE_LIMITS = {
   challenge: { limit: 20, windowMs: 10 * 60 * 1000 },
   complete: { limit: 20, windowMs: 10 * 60 * 1000 },
   logout: { limit: 40, windowMs: 10 * 60 * 1000 },
+  walletClaims: { limit: 120, windowMs: 60 * 1000 },
+  rounds: { limit: 120, windowMs: 60 * 1000 },
+  claimLookup: { limit: 120, windowMs: 60 * 1000 },
+  finalizeRound: { limit: 20, windowMs: 10 * 60 * 1000 },
   health: { limit: 30, windowMs: 60 * 1000 },
 };
 
@@ -161,9 +169,11 @@ function shouldTrustProxy() {
   return /^true$/iu.test(String(process.env.X_AUTH_TRUST_PROXY || "").trim());
 }
 
+const appConfig = loadAppConfig();
 const db = openDatabase();
 const accountStore = createAccountStore(db);
 const recoverySubmissionStore = createRecoverySubmissionStore(db);
+const airdropRoundStore = createAirdropRoundStore(db);
 
 function createRandomToken(bytes = 32) {
   return crypto.randomBytes(bytes).toString("hex");
@@ -709,6 +719,44 @@ function serializeSubmissionForClient(submission) {
   };
 }
 
+function serializeAirdropRoundSummary(round) {
+  if (!round) return null;
+
+  return {
+    deploymentKey: String(round.deploymentKey || "").trim(),
+    epoch: Number(round.epoch || 0),
+    merkleRoot: String(round.merkleRoot || "").trim(),
+    deadline: Number(round.deadline || 0),
+    claimCount: Number(round.claimCount || 0),
+    totalAmountRaw: String(round.totalAmountRaw || "0"),
+    decimals: Number(round.decimals || 18),
+    chainId: Number(round.chainId || 0),
+    contractAddress: String(round.contractAddress || "").trim(),
+    sourceKind: String(round.sourceKind || "").trim(),
+    startTxHash: String(round.startTxHash || "").trim(),
+    startBlockNumber: round.startBlockNumber == null ? null : Number(round.startBlockNumber),
+    startBlockHash: String(round.startBlockHash || "").trim(),
+    createdAt: String(round.createdAt || "").trim(),
+    updatedAt: String(round.updatedAt || "").trim(),
+  };
+}
+
+function serializeAirdropWalletRound(round) {
+  if (!round) return null;
+
+  return {
+    ...serializeAirdropRoundSummary(round),
+    entry: round.entry
+      ? {
+        index: String(round.entry.index || ""),
+        account: String(round.entry.account || "").trim(),
+        amountRaw: String(round.entry.amountRaw || "0"),
+        proof: Array.isArray(round.entry.proof) ? [...round.entry.proof] : [],
+      }
+      : null,
+  };
+}
+
 function getExistingWalletMessage(account) {
   if (!account?.walletAddress) {
     return "";
@@ -725,6 +773,15 @@ function getExistingRecoverySubmissionMessage() {
   return "We already received a response for this X account.";
 }
 
+function getRequiredDeploymentKey() {
+  const deploymentKey = String(appConfig.deploymentKey || "").trim();
+  if (!deploymentKey) {
+    throw new HttpError(500, "Airdrop deployment key is not configured.", { expose: false });
+  }
+
+  return deploymentKey;
+}
+
 function getHealthPayload(request) {
   const basePayload = { ok: true };
   if (!isLoopbackAddress(getClientIp(request))) {
@@ -733,6 +790,11 @@ function getHealthPayload(request) {
 
   const accountStats = accountStore.getStats();
   const submissionStats = recoverySubmissionStore.getStats();
+  const roundStats = airdropRoundStore.getStats();
+  const deploymentKey = String(appConfig.deploymentKey || "").trim();
+  const deploymentRoundStats = deploymentKey
+    ? airdropRoundStore.getStats(deploymentKey)
+    : { roundCount: 0, claimCount: 0 };
 
   return {
     ...basePayload,
@@ -751,6 +813,16 @@ function getHealthPayload(request) {
     recoveryCandidateCount: accountStats.recoveryCandidateCount,
     latestSnapshotCapturedAt: accountStats.latestSnapshotCapturedAt,
     recoverySubmissionCount: submissionStats.submissionCount,
+    airdropRoundCount: deploymentRoundStats.roundCount,
+    airdropClaimCount: deploymentRoundStats.claimCount,
+    airdropRoundCountTotal: roundStats.roundCount,
+    airdropClaimCountTotal: roundStats.claimCount,
+    chainId: appConfig.chainId,
+    rpcUrlConfigured: Boolean(appConfig.rpcUrl),
+    airdropAddress: appConfig.airdropAddress,
+    deploymentKey: appConfig.deploymentKey,
+    apiBaseUrl: appConfig.apiBaseUrl,
+    claimsManifestPath: appConfig.claimsManifestPath,
     activeAuthSessions: authSessions.size,
     activeRequestTokens: requestTokens.size,
     activeChallenges: linkChallenges.size,
@@ -942,6 +1014,94 @@ async function handleSessionLookup(request, response) {
   });
 }
 
+async function handleWalletClaimsLookup(request, response, walletAddress) {
+  const normalizedWalletAddress = requireWalletAddress(walletAddress);
+  const rounds = airdropRoundStore.getWalletRounds(normalizedWalletAddress, getRequiredDeploymentKey());
+
+  writeJson(response, 200, {
+    walletAddress: normalizedWalletAddress,
+    rounds: rounds.map((round) => serializeAirdropWalletRound(round)),
+  });
+}
+
+async function handleRoundsLookup(response) {
+  const rounds = airdropRoundStore.listRounds(getRequiredDeploymentKey());
+  writeJson(response, 200, {
+    rounds: rounds.map((round) => serializeAirdropRoundSummary(round)),
+  });
+}
+
+async function handleClaimByEpochAndIndexLookup(response, epoch, claimIndex) {
+  const normalizedEpoch = Number.parseInt(String(epoch || "").trim(), 10);
+  const normalizedClaimIndex = Number.parseInt(String(claimIndex || "").trim(), 10);
+
+  if (!Number.isInteger(normalizedEpoch) || normalizedEpoch <= 0) {
+    throw new HttpError(400, "Epoch must be a positive integer.");
+  }
+
+  if (!Number.isInteger(normalizedClaimIndex) || normalizedClaimIndex < 0) {
+    throw new HttpError(400, "Claim index must be zero or greater.");
+  }
+
+  const claim = airdropRoundStore.getClaimByEpochAndIndex(
+    normalizedEpoch,
+    normalizedClaimIndex,
+    getRequiredDeploymentKey(),
+  );
+  if (!claim) {
+    throw new HttpError(404, "Claim was not found.");
+  }
+
+  writeJson(response, 200, {
+    round: serializeAirdropRoundSummary(claim),
+    entry: serializeAirdropWalletRound(claim).entry,
+  });
+}
+
+async function handleFinalizeAirdropRound(request, response) {
+  const body = await readJsonRequest(request);
+  const rawClaims = Array.isArray(body.claims)
+    ? body.claims
+    : Array.isArray(body.round?.claims)
+      ? body.round.claims
+      : null;
+  const txHash = String(body.txHash || body.transactionHash || "").trim();
+  const decimals = Number.parseInt(String(body.decimals || body.round?.decimals || appConfig.tokenDecimals || "18").trim(), 10);
+
+  if (!rawClaims?.length) {
+    throw new HttpError(400, "Claims payload is required.");
+  }
+
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new HttpError(400, "Token decimals must be a non-negative integer.");
+  }
+
+  const builtRound = buildClaimRound(rawClaims, decimals);
+  const chainConfig = requireChainConfig(appConfig);
+  const verifiedRound = await verifyAirdropStartTransaction(chainConfig, txHash, builtRound.root);
+  const savedRound = airdropRoundStore.upsertRound({
+    deploymentKey: getRequiredDeploymentKey(),
+    epoch: verifiedRound.epoch,
+    merkleRoot: verifiedRound.merkleRoot,
+    deadline: verifiedRound.deadline,
+    claimCount: builtRound.claimCount,
+    totalAmountRaw: builtRound.totalAmountRaw,
+    decimals: builtRound.decimals,
+    chainId: chainConfig.chainId,
+    contractAddress: chainConfig.airdropAddress,
+    sourceKind: "admin-finalized",
+    startTxHash: verifiedRound.txHash,
+    startBlockNumber: verifiedRound.blockNumber,
+    startBlockHash: verifiedRound.blockHash,
+    claims: builtRound.claims,
+    updatedAt: new Date().toISOString(),
+  });
+
+  writeJson(response, 200, {
+    round: serializeAirdropRoundSummary(savedRound),
+  });
+}
+
 async function handleLinkChallenge(request, response) {
   const session = getRequiredSessionFromCookie(request, response);
   requireCsrf(request, session);
@@ -1126,52 +1286,84 @@ const server = http.createServer(async (request, response) => {
   setStandardHeaders(response);
 
   try {
+    const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+    const pathname = requestUrl.pathname;
+
     if (request.method === "OPTIONS") {
       handleOptions(request, response);
       return;
     }
 
-    if (request.method === "GET" && request.url.startsWith("/health")) {
+    if (request.method === "GET" && pathname === "/health") {
       consumeRateLimit(request, "health");
       pruneExpiredState();
       writeJson(response, 200, getHealthPayload(request));
       return;
     }
 
-    if (request.method === "GET" && request.url.startsWith("/api/x/start")) {
+    if (request.method === "GET" && pathname === "/api/x/start") {
       consumeRateLimit(request, "start");
       await handleStart(request, response);
       return;
     }
 
-    if (request.method === "GET" && request.url.startsWith("/api/x/callback")) {
+    if (request.method === "GET" && pathname === "/api/x/callback") {
       consumeRateLimit(request, "callback");
       await handleCallback(request, response);
       return;
     }
 
-    if (request.method === "GET" && request.url.startsWith("/api/x/session")) {
+    if (request.method === "GET" && pathname === "/api/x/session") {
       requireAllowedOrigin(request, response);
       consumeRateLimit(request, "session");
       await handleSessionLookup(request, response);
       return;
     }
 
-    if (request.method === "POST" && request.url === "/api/x/link/challenge") {
+    if (request.method === "GET" && pathname.startsWith("/api/claims/wallet/")) {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "walletClaims");
+      await handleWalletClaimsLookup(request, response, decodeURIComponent(pathname.slice("/api/claims/wallet/".length)));
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/airdrop/rounds") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "rounds");
+      await handleRoundsLookup(response);
+      return;
+    }
+
+    const claimLookupMatch = pathname.match(/^\/api\/airdrop\/epochs\/(\d+)\/claims\/(\d+)$/u);
+    if (request.method === "GET" && claimLookupMatch) {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "claimLookup");
+      await handleClaimByEpochAndIndexLookup(response, claimLookupMatch[1], claimLookupMatch[2]);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/airdrop-rounds/finalize") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "finalizeRound");
+      await handleFinalizeAirdropRound(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/x/link/challenge") {
       requireAllowedOrigin(request, response);
       consumeRateLimit(request, "challenge");
       await handleLinkChallenge(request, response);
       return;
     }
 
-    if (request.method === "POST" && request.url === "/api/x/link/complete") {
+    if (request.method === "POST" && pathname === "/api/x/link/complete") {
       requireAllowedOrigin(request, response);
       consumeRateLimit(request, "complete");
       await handleLinkComplete(request, response);
       return;
     }
 
-    if (request.method === "POST" && request.url === "/api/x/logout") {
+    if (request.method === "POST" && pathname === "/api/x/logout") {
       requireAllowedOrigin(request, response);
       consumeRateLimit(request, "logout");
       await handleLogout(request, response);
@@ -1187,6 +1379,10 @@ const server = http.createServer(async (request, response) => {
 server.listen(PORT, HOST, () => {
   const accountStats = accountStore.getStats();
   const submissionStats = recoverySubmissionStore.getStats();
+  const deploymentKey = String(appConfig.deploymentKey || "").trim();
+  const deploymentRoundStats = deploymentKey
+    ? airdropRoundStore.getStats(deploymentKey)
+    : { roundCount: 0, claimCount: 0 };
   console.log(`Liberdus server listening at http://${HOST}:${PORT}`);
   console.log(`SQLite path: ${getDatabasePath()}`);
   console.log(`Allowed origins: ${getAllowedOrigins().join(", ")}`);
@@ -1201,6 +1397,13 @@ server.listen(PORT, HOST, () => {
   console.log(`Recovery candidates in DB: ${accountStats.recoveryCandidateCount}`);
   console.log(`Latest follower snapshot captured at: ${accountStats.latestSnapshotCapturedAt || "(none)"}`);
   console.log(`Recovery submissions in DB: ${submissionStats.submissionCount}`);
+  console.log(`Backend deployment key: ${deploymentKey || "(missing)"}`);
+  console.log(`Airdrop rounds in current deployment: ${deploymentRoundStats.roundCount}`);
+  console.log(`Airdrop claims in current deployment: ${deploymentRoundStats.claimCount}`);
+  console.log(`Backend chain config source: ${appConfig.sourcePath || "(env only)"}`);
+  console.log(`Backend chain ID: ${appConfig.chainId ?? "(missing)"}`);
+  console.log(`Backend RPC URL: ${appConfig.rpcUrl || "(missing)"}`);
+  console.log(`Backend airdrop address: ${appConfig.airdropAddress || "(missing)"}`);
   console.log(`Legacy recovery submission import path: ${getLegacyRecoveryStorePath()}`);
   if (accountStats.followerCount === 0 && fs.existsSync(getLegacyFollowerSnapshotPath())) {
     console.log(`Follower DB is empty. Import a snapshot with: npm run followers:import`);

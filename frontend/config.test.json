@@ -8,6 +8,8 @@
     "symbol": "tBNB",
     "decimals": 18
   },
+  "apiBaseUrl": "",
+  "deploymentKey": "",
   "claimsManifestPath": "./claims/index.json",
   "xAuth": {
     "enabled": true,
