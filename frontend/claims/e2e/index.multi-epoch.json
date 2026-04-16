@@ -1,0 +1,16 @@
+{
+  "rounds": [
+    {
+      "epoch": 1,
+      "file": "./epoch-1.claims.json"
+    },
+    {
+      "epoch": 2,
+      "file": "./epoch-2.claims.json"
+    },
+    {
+      "epoch": 3,
+      "file": "./epoch-3.claims.json"
+    }
+  ]
+}

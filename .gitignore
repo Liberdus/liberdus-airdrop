@@ -9,3 +9,5 @@ npm-debug.log*
 frontend/config.local.json
 frontend/config.json
 frontend/claims/generated/
+playwright-report/
+test-results/
