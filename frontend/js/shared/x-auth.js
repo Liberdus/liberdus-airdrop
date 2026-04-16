@@ -96,13 +96,59 @@ function normalizeProfile(payload) {
   };
 }
 
+function normalizeAccount(account) {
+  if (!account || typeof account !== "object") {
+    return null;
+  }
+
+  return {
+    id: Number(account.id || 0) || null,
+    xUserId: String(account.xUserId || "").trim(),
+    username: String(account.username || "").trim(),
+    walletAddress: String(account.walletAddress || "").trim(),
+    walletSource: String(account.walletSource || "").trim(),
+    isFollower: Boolean(account.isFollower),
+    needsRecovery: Boolean(account.needsRecovery),
+    firstSeenFollowingAt: account.firstSeenFollowingAt || null,
+    lastSeenFollowingAt: account.lastSeenFollowingAt || null,
+    snapshotsSeenCount: Number(account.snapshotsSeenCount || 0),
+  };
+}
+
+function normalizeExistingSubmission(submission) {
+  if (!submission || typeof submission !== "object") {
+    return null;
+  }
+
+  return {
+    id: String(submission.id || "").trim(),
+    xUserId: String(submission.xUserId || "").trim(),
+    usernameAtSubmission: String(submission.usernameAtSubmission || "").trim(),
+    walletAddress: String(submission.walletAddress || "").trim(),
+    wasKnownFollower: Boolean(submission.wasKnownFollower),
+    wasRecoveryCandidate: Boolean(submission.wasRecoveryCandidate),
+    status: String(submission.status || "").trim(),
+    submittedAt: submission.submittedAt || null,
+  };
+}
+
 function buildSession(result, profile, previousSession = null) {
   const previousLinkResult = previousSession?.profile?.id === profile.id ? previousSession.linkResult || null : null;
+  const previousAccount = previousSession?.profile?.id === profile.id ? previousSession.account || null : null;
+  const previousExistingSubmission = previousSession?.profile?.id === profile.id
+    ? previousSession.existingSubmission || null
+    : null;
+  const hasAccountField = Object.prototype.hasOwnProperty.call(result || {}, "account");
+  const hasExistingSubmissionField = Object.prototype.hasOwnProperty.call(result || {}, "existingSubmission");
   return {
     expiresAt: result?.expiresAt || null,
     csrfToken: String(result?.csrfToken || ""),
     profile,
     authenticatedAt: result?.authenticatedAt || new Date().toISOString(),
+    account: hasAccountField ? normalizeAccount(result.account) : previousAccount,
+    existingSubmission: hasExistingSubmissionField
+      ? normalizeExistingSubmission(result.existingSubmission)
+      : previousExistingSubmission,
     linkResult: previousLinkResult,
   };
 }
@@ -215,6 +261,13 @@ export async function completeXLoginIfPresent(config = {}) {
       return {
         handled,
         session: previousSession,
+      };
+    }
+
+    if (!hasCompletionSignal && !previousSession) {
+      return {
+        handled,
+        session: null,
       };
     }
 

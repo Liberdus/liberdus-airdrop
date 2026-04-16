@@ -95,7 +95,6 @@ const els = {
   xAuthHint: document.getElementById("xAuthHint"),
   xAuthIdentity: document.getElementById("xAuthIdentity"),
   xAuthAvatar: document.getElementById("xAuthAvatar"),
-  xAuthName: document.getElementById("xAuthName"),
   xAuthProfileLink: document.getElementById("xAuthProfileLink"),
   xAuthStatus: document.getElementById("xAuthStatus"),
   xAuthLinkStatus: document.getElementById("xAuthLinkStatus"),
@@ -186,6 +185,40 @@ function formatXLinkStatus(linkResult) {
   return "Thanks. We received your wallet and X account and will review it.";
 }
 
+function getSignedInXAccount() {
+  return runtime.xSession?.account || null;
+}
+
+function getExistingXSubmission() {
+  return runtime.xSession?.existingSubmission || null;
+}
+
+function hasWalletOnFileForXAccount(account = getSignedInXAccount()) {
+  return Boolean(String(account?.walletAddress || "").trim());
+}
+
+function formatExistingFormWalletStatus(account = getSignedInXAccount()) {
+  const walletAddress = String(account?.walletAddress || "").trim();
+  if (!walletAddress) {
+    return "We already have a wallet on file for this X account.";
+  }
+
+  const isConnectedWalletMatch = Boolean(
+    runtime.account
+    && normalizeAddress(walletAddress) === normalizeAddress(runtime.account),
+  );
+
+  if (isConnectedWalletMatch) {
+    return `We already have this X account linked to ${walletAddress}. Use this wallet to claim when eligible rounds are available.`;
+  }
+
+  return `We already have this X account linked to ${walletAddress}. Switch to that wallet to claim.`;
+}
+
+function formatExistingRecoveryStatus() {
+  return "We already received a response for this X account.";
+}
+
 function syncXSessionFromStorage() {
   const session = getXSession();
   if (session && isXSessionExpired(session)) {
@@ -207,25 +240,24 @@ function syncXAuthCard() {
 
   const isConfigured = isXAuthConfigured(runtime.config);
   const profile = runtime.xSession?.profile || null;
+  const account = getSignedInXAccount();
+  const existingSubmission = getExistingXSubmission();
   const isSignedIn = Boolean(profile?.username);
-  const linkResult = runtime.xSession?.linkResult || null;
-  const hasLinkedWallet = Boolean(
-    linkResult
-    && runtime.account
-    && normalizeAddress(linkResult.walletAddress || "") === normalizeAddress(runtime.account),
-  );
+  const hasWalletOnFile = hasWalletOnFileForXAccount(account);
+  const hasSavedFormWallet = hasWalletOnFile && account?.walletSource === "form";
+  const hasSavedRecoveryWallet = Boolean(existingSubmission) || (hasWalletOnFile && account?.walletSource !== "form");
 
   els.xAuthIdentity.hidden = !isSignedIn;
   els.xDisconnectButton.hidden = !isSignedIn;
   els.xAuthButton.hidden = isSignedIn;
-  els.xVerifyButton.hidden = !isSignedIn;
+  els.xVerifyButton.hidden = !isSignedIn || hasWalletOnFile || Boolean(existingSubmission);
+  els.xAuthStatus.hidden = false;
 
   if (isSignedIn) {
-    els.xAuthName.textContent = profile.name || `@${profile.username}`;
     els.xAuthProfileLink.textContent = `@${profile.username}`;
     els.xAuthProfileLink.href = `https://x.com/${encodeURIComponent(profile.username)}`;
     els.xAuthProfileLink.hidden = false;
-    els.xAuthHint.textContent = "This X account can be linked to your connected wallet for follower recovery.";
+    els.xAuthHint.hidden = true;
     els.xAuthStatus.textContent = "Signed in on x.com.";
     els.xAuthStatus.dataset.tone = "";
 
@@ -239,20 +271,31 @@ function syncXAuthCard() {
       els.xAuthAvatar.alt = "";
     }
 
+    if (hasSavedFormWallet) {
+      els.xAuthHint.hidden = true;
+      els.xAuthStatus.hidden = true;
+      els.xVerifyButton.hidden = true;
+      els.xVerifyButton.disabled = true;
+      els.xAuthLinkStatus.hidden = false;
+      els.xAuthLinkStatus.textContent = formatExistingFormWalletStatus(account);
+      return;
+    }
+
+    if (hasSavedRecoveryWallet) {
+      els.xAuthHint.hidden = true;
+      els.xAuthStatus.hidden = true;
+      els.xVerifyButton.hidden = true;
+      els.xVerifyButton.disabled = true;
+      els.xAuthLinkStatus.hidden = false;
+      els.xAuthLinkStatus.textContent = formatExistingRecoveryStatus();
+      return;
+    }
+
     if (runtime.isSubmittingXWalletLink) {
       els.xVerifyButton.textContent = "Verifying...";
       els.xVerifyButton.disabled = true;
       els.xAuthLinkStatus.hidden = false;
       els.xAuthLinkStatus.textContent = "Confirm the wallet signature to save this recovery request.";
-      return;
-    }
-
-    if (hasLinkedWallet) {
-      const status = formatXLinkStatus(linkResult);
-      els.xVerifyButton.textContent = "Wallet Verified";
-      els.xVerifyButton.disabled = true;
-      els.xAuthLinkStatus.hidden = false;
-      els.xAuthLinkStatus.textContent = status;
       return;
     }
 
@@ -264,7 +307,6 @@ function syncXAuthCard() {
     return;
   }
 
-  els.xAuthName.textContent = "-";
   els.xAuthProfileLink.textContent = "@-";
   els.xAuthProfileLink.href = "#";
   els.xAuthProfileLink.hidden = true;
@@ -277,6 +319,8 @@ function syncXAuthCard() {
   els.xAuthLinkStatus.textContent = "";
 
   if (runtime.isConnectingX) {
+    els.xAuthStatus.hidden = false;
+    els.xAuthHint.hidden = false;
     els.xAuthHint.textContent = "Complete the X approval flow to return here.";
     els.xAuthStatus.textContent = "Finishing X sign-in...";
     els.xAuthStatus.dataset.tone = "";
@@ -286,6 +330,8 @@ function syncXAuthCard() {
   }
 
   if (!isConfigured) {
+    els.xAuthStatus.hidden = false;
+    els.xAuthHint.hidden = false;
     els.xAuthHint.textContent = "This deployment still needs the X auth backend and callback configured.";
     els.xAuthStatus.textContent = "X sign-in is not configured yet.";
     els.xAuthStatus.dataset.tone = "warn";
@@ -294,6 +340,8 @@ function syncXAuthCard() {
     return;
   }
 
+  els.xAuthStatus.hidden = false;
+  els.xAuthHint.hidden = false;
   els.xAuthHint.textContent = "No claim was found for this wallet. Sign in with X to start follower recovery.";
   els.xAuthStatus.textContent = "Not signed in.";
   els.xAuthStatus.dataset.tone = "";
@@ -393,6 +441,19 @@ async function verifyWalletAndSaveRecovery() {
     throw new Error("Sign in with X first.");
   }
 
+  const existingAccount = getSignedInXAccount();
+  const existingSubmission = getExistingXSubmission();
+  if (hasWalletOnFileForXAccount(existingAccount)) {
+    if (existingAccount?.walletSource === "form") {
+      throw new Error(formatExistingFormWalletStatus(existingAccount));
+    }
+    throw new Error(formatExistingRecoveryStatus());
+  }
+
+  if (existingSubmission) {
+    throw new Error(formatExistingRecoveryStatus());
+  }
+
   runtime.isSubmittingXWalletLink = true;
   syncXAuthCard();
 
@@ -414,6 +475,8 @@ async function verifyWalletAndSaveRecovery() {
 
     runtime.xSession = {
       ...runtime.xSession,
+      account: result?.account || runtime.xSession?.account || null,
+      existingSubmission: result?.existingSubmission || runtime.xSession?.existingSubmission || null,
       linkResult: result,
     };
     saveXSession(runtime.xSession);

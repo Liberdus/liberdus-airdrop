@@ -119,6 +119,8 @@ For local development:
 npm run xauth:local
 ```
 
+The local backend now lives under `backend/`.
+
 The local auth server reads these environment variables from `.env`:
 
 ```dotenv
@@ -130,8 +132,10 @@ X_FRONTEND_RETURN_URLS=http://127.0.0.1:5502/frontend/
 X_AUTH_ALLOWED_ORIGINS=http://127.0.0.1:5502
 X_AUTH_COOKIE_SECURE=auto
 X_AUTH_TRUST_PROXY=false
+LIBERDUS_DB_PATH=data/liberdus.sqlite
 X_FOLLOWER_SNAPSHOT_FILE=cache/x/liberdus-followers.json
 X_RECOVERY_CANDIDATES_FILE=cache/x/missing-address-usernames.json
+# Legacy import source for pre-SQLite recovery submissions.
 X_RECOVERY_STORE_FILE=cache/x/recovery-links.json
 ```
 
@@ -149,6 +153,30 @@ Then set local frontend config like:
 
 For production, set `X_AUTH_COOKIE_SECURE=true` behind HTTPS and configure `X_AUTH_TRUST_PROXY=true` only if the server is behind a trusted reverse proxy that sets `X-Forwarded-For`.
 
+Follower matching now reads from SQLite, not directly from the raw follower export JSON. Import the latest snapshot into the DB before running the auth server:
+
+```bash
+npm run followers:import
+```
+
+That command reads `X_FOLLOWER_SNAPSHOT_FILE`, upserts the latest follower state into `x_accounts`, and updates per-account snapshot rollups in `LIBERDUS_DB_PATH` so you can track how many snapshots an account has appeared in and when it was first or last seen.
+
+Recovery-candidate matching also reads from SQLite. Import the latest processed candidate list before running the auth server:
+
+```bash
+npm run recovery-candidates:import -- --file "C:\path\to\api_followers_not_seen_in_airdrop_rewards_....csv"
+```
+
+That command reads `X_RECOVERY_CANDIDATES_FILE` by default, supports both the processed CSV format and the legacy JSON username list, and marks the latest recovery-candidate set on `x_accounts` in `LIBERDUS_DB_PATH`.
+
+If you want to pull old JSON submissions into SQLite once, run:
+
+```bash
+npm run recovery-submissions:import
+```
+
+That command reads `X_RECOVERY_STORE_FILE` as a legacy import source and writes those rows into `recovery_submissions`.
+
 The local auth server:
 
 - starts the OAuth 1.0a request-token flow server-side
@@ -162,10 +190,12 @@ The local auth server:
 - rate limits the auth, challenge, and save endpoints
 - issues a wallet-signature challenge tied to the signed-in X account
 - verifies the wallet signature on the backend
-- stores the resulting wallet/X pair in `X_RECOVERY_STORE_FILE`
+- reads follower matches from the `x_accounts` table in `LIBERDUS_DB_PATH`
+- reads recovery-candidate flags from the `x_accounts` table in `LIBERDUS_DB_PATH`
+- stores recovery proof submissions in the `recovery_submissions` table in `LIBERDUS_DB_PATH`
 - flags whether the username matched:
-  - the follower snapshot in `X_FOLLOWER_SNAPSHOT_FILE`
-  - the optional recovery candidate list in `X_RECOVERY_CANDIDATES_FILE`
+  - the imported follower snapshot data in `LIBERDUS_DB_PATH`
+  - the latest imported recovery-candidate set in `LIBERDUS_DB_PATH`
 
 `X_RECOVERY_CANDIDATES_FILE` is optional. If present, it can be either:
 

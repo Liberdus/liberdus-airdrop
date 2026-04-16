@@ -724,19 +724,11 @@ select {
 .x-auth-profile {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 0;
 }
 
-.x-auth-name,
 .x-auth-status {
   margin: 0;
-}
-
-.x-auth-name {
-  color: #fff6df;
-  font-family: var(--display);
-  font-size: 1.1rem;
-  line-height: 1.1;
 }
 
 .x-auth-link,
@@ -746,7 +738,8 @@ select {
 
 .x-auth-link {
   color: var(--accent-strong);
-  font-size: 0.9rem;
+  font-size: 1rem;
+  line-height: 1.2;
   text-decoration: underline;
   overflow-wrap: anywhere;
 }

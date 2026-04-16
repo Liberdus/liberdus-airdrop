@@ -5,6 +5,9 @@ const path = require("node:path");
 
 const dotenv = require("dotenv");
 const { ethers } = require("ethers");
+const { openDatabase, getDatabasePath } = require("./lib/db");
+const { createAccountStore } = require("./lib/x-account-store");
+const { createRecoverySubmissionStore } = require("./lib/recovery-submission-store");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env"), quiet: true });
 
@@ -126,15 +129,15 @@ function validateReturnUri(returnUri) {
   return normalized;
 }
 
-function getFollowerSnapshotPath() {
+function getLegacyFollowerSnapshotPath() {
   return resolveRepoPath(process.env.X_FOLLOWER_SNAPSHOT_FILE || DEFAULT_FOLLOWER_SNAPSHOT_FILE);
 }
 
-function getRecoveryCandidatesPath() {
+function getLegacyRecoveryCandidatesPath() {
   return resolveRepoPath(process.env.X_RECOVERY_CANDIDATES_FILE || DEFAULT_RECOVERY_CANDIDATES_FILE);
 }
 
-function getRecoveryStorePath() {
+function getLegacyRecoveryStorePath() {
   return resolveRepoPath(process.env.X_RECOVERY_STORE_FILE || DEFAULT_RECOVERY_STORE_FILE);
 }
 
@@ -158,72 +161,9 @@ function shouldTrustProxy() {
   return /^true$/iu.test(String(process.env.X_AUTH_TRUST_PROXY || "").trim());
 }
 
-function normalizeUsername(username) {
-  return String(username || "").trim().replace(/^@+/u, "").toLowerCase();
-}
-
-function readJsonIfExists(filePath, fallbackValue) {
-  try {
-    if (!fs.existsSync(filePath)) return fallbackValue;
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return fallbackValue;
-  }
-}
-
-function ensureDirectory(filePath) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-}
-
-function writeJsonFile(filePath, value) {
-  ensureDirectory(filePath);
-  const tempPath = `${filePath}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  fs.renameSync(tempPath, filePath);
-}
-
-function loadFollowerUsernames() {
-  const snapshot = readJsonIfExists(getFollowerSnapshotPath(), {});
-  const followers = Array.isArray(snapshot?.followers) ? snapshot.followers : [];
-  return new Set(
-    followers
-      .map((follower) => normalizeUsername(follower?.username))
-      .filter(Boolean),
-  );
-}
-
-function loadRecoveryCandidateUsernames() {
-  const rawValue = readJsonIfExists(getRecoveryCandidatesPath(), []);
-  const usernames = Array.isArray(rawValue)
-    ? rawValue
-    : Array.isArray(rawValue?.usernames)
-      ? rawValue.usernames
-      : [];
-
-  return new Set(usernames.map((username) => normalizeUsername(username)).filter(Boolean));
-}
-
-function loadRecoveryStore() {
-  const loaded = readJsonIfExists(getRecoveryStorePath(), null);
-  if (loaded && typeof loaded === "object" && Array.isArray(loaded.records)) {
-    return loaded;
-  }
-
-  return {
-    version: 1,
-    updatedAt: null,
-    records: [],
-  };
-}
-
-function saveRecoveryStore(store) {
-  store.updatedAt = new Date().toISOString();
-  writeJsonFile(getRecoveryStorePath(), store);
-}
-
-const followerUsernames = loadFollowerUsernames();
-const recoveryCandidateUsernames = loadRecoveryCandidateUsernames();
-const recoveryStore = loadRecoveryStore();
+const db = openDatabase();
+const accountStore = createAccountStore(db);
+const recoverySubmissionStore = createRecoverySubmissionStore(db);
 
 function createRandomToken(bytes = 32) {
   return crypto.randomBytes(bytes).toString("hex");
@@ -685,30 +625,6 @@ function buildWalletLinkMessage({ profile, walletAddress, challengeId, issuedAt 
   ].join("\n");
 }
 
-function upsertRecoveryRecord(record) {
-  const existingIndex = recoveryStore.records.findIndex(
-    (entry) => String(entry.xUserId || "").trim() === String(record.xUserId || "").trim()
-      && String(entry.walletAddress || "").toLowerCase() === String(record.walletAddress || "").toLowerCase(),
-  );
-
-  if (existingIndex >= 0) {
-    recoveryStore.records[existingIndex] = {
-      ...recoveryStore.records[existingIndex],
-      ...record,
-      updatedAt: new Date().toISOString(),
-    };
-    return recoveryStore.records[existingIndex];
-  }
-
-  const nextRecord = {
-    ...record,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-  recoveryStore.records.push(nextRecord);
-  return nextRecord;
-}
-
 function appendAuthQuery(returnUri, key, value) {
   const redirectUrl = new URL(returnUri);
   redirectUrl.searchParams.set(key, value);
@@ -761,26 +677,80 @@ function normalizeIdentityFromOAuth1(accessTokenResponse, verifiedCredentials = 
   };
 }
 
+function serializeAccountForClient(account) {
+  if (!account) return null;
+
+  return {
+    id: account.id,
+    xUserId: account.xUserId,
+    username: account.usernameDisplay,
+    walletAddress: account.walletAddress || "",
+    walletSource: account.walletSource || "",
+    isFollower: Boolean(account.isFollower),
+    needsRecovery: Boolean(account.needsRecovery),
+    firstSeenFollowingAt: account.firstSeenFollowingAt || null,
+    lastSeenFollowingAt: account.lastSeenFollowingAt || null,
+    snapshotsSeenCount: Number(account.snapshotsSeenCount || 0),
+  };
+}
+
+function serializeSubmissionForClient(submission) {
+  if (!submission) return null;
+
+  return {
+    id: submission.id,
+    xUserId: submission.xUserId,
+    usernameAtSubmission: submission.usernameAtSubmission,
+    walletAddress: submission.walletAddress,
+    wasKnownFollower: Boolean(submission.wasKnownFollower),
+    wasRecoveryCandidate: Boolean(submission.wasRecoveryCandidate),
+    status: submission.status || "",
+    submittedAt: submission.submittedAt || null,
+  };
+}
+
+function getExistingWalletMessage(account) {
+  if (!account?.walletAddress) {
+    return "";
+  }
+
+  if (account.walletSource === "form") {
+    return `We already have a wallet on file for this X account: ${account.walletAddress}.`;
+  }
+
+  return "We already received a response for this X account.";
+}
+
+function getExistingRecoverySubmissionMessage() {
+  return "We already received a response for this X account.";
+}
+
 function getHealthPayload(request) {
   const basePayload = { ok: true };
   if (!isLoopbackAddress(getClientIp(request))) {
     return basePayload;
   }
 
+  const accountStats = accountStore.getStats();
+  const submissionStats = recoverySubmissionStore.getStats();
+
   return {
     ...basePayload,
     apiKeyConfigured: Boolean(getApiKey()),
     apiSecretConfigured: Boolean(getApiSecret()),
     callbackUrl: getCallbackUrl(),
+    databasePath: getDatabasePath(),
     defaultFrontendReturnUrl: getDefaultFrontendReturnUrl(),
     allowedOrigins: getAllowedOrigins(),
     allowedReturnUrls: getAllowedReturnUrls(),
-    followerSnapshotPath: getFollowerSnapshotPath(),
-    followerSnapshotCount: followerUsernames.size,
-    recoveryCandidatesPath: getRecoveryCandidatesPath(),
-    recoveryCandidateCount: recoveryCandidateUsernames.size,
-    recoveryStorePath: getRecoveryStorePath(),
-    recoveryRecordCount: recoveryStore.records.length,
+    legacyFollowerSnapshotPath: getLegacyFollowerSnapshotPath(),
+    legacyRecoveryCandidatesPath: getLegacyRecoveryCandidatesPath(),
+    legacyRecoveryStorePath: getLegacyRecoveryStorePath(),
+    accountCount: accountStats.accountCount,
+    followerCount: accountStats.followerCount,
+    recoveryCandidateCount: accountStats.recoveryCandidateCount,
+    latestSnapshotCapturedAt: accountStats.latestSnapshotCapturedAt,
+    recoverySubmissionCount: submissionStats.submissionCount,
     activeAuthSessions: authSessions.size,
     activeRequestTokens: requestTokens.size,
     activeChallenges: linkChallenges.size,
@@ -959,18 +929,32 @@ async function handleCallback(request, response) {
 
 async function handleSessionLookup(request, response) {
   const session = getRequiredSessionFromCookie(request, response);
+  const account = accountStore.getAccountByProfile(session.profile);
+  const existingSubmission = recoverySubmissionStore.getLatestSubmissionForProfile(session.profile);
 
   writeJson(response, 200, {
     profile: session.profile,
     authenticatedAt: session.authenticatedAt,
     expiresAt: session.expiresAtMs,
     csrfToken: session.csrfToken,
+    account: serializeAccountForClient(account),
+    existingSubmission: serializeSubmissionForClient(existingSubmission),
   });
 }
 
 async function handleLinkChallenge(request, response) {
   const session = getRequiredSessionFromCookie(request, response);
   requireCsrf(request, session);
+  const flags = accountStore.getFlagsForProfile(session.profile);
+  const existingSubmission = recoverySubmissionStore.getLatestSubmissionForProfile(session.profile);
+
+  if (flags.account?.walletAddress) {
+    throw new HttpError(409, getExistingWalletMessage(flags.account));
+  }
+
+  if (existingSubmission) {
+    throw new HttpError(409, getExistingRecoverySubmissionMessage());
+  }
 
   const body = await readJsonRequest(request);
   const walletAddress = requireWalletAddress(body.walletAddress);
@@ -1008,6 +992,16 @@ async function handleLinkChallenge(request, response) {
 async function handleLinkComplete(request, response) {
   const session = getRequiredSessionFromCookie(request, response);
   requireCsrf(request, session);
+  const flags = accountStore.getFlagsForProfile(session.profile);
+  const existingSubmission = recoverySubmissionStore.getLatestSubmissionForProfile(session.profile);
+
+  if (flags.account?.walletAddress) {
+    throw new HttpError(409, getExistingWalletMessage(flags.account));
+  }
+
+  if (existingSubmission) {
+    throw new HttpError(409, getExistingRecoverySubmissionMessage());
+  }
 
   const body = await readJsonRequest(request);
   const challengeId = String(body.challengeId || "").trim();
@@ -1044,38 +1038,40 @@ async function handleLinkComplete(request, response) {
   }
 
   linkChallenges.delete(challengeId);
+  const savedAt = new Date().toISOString();
+  const knownAccount = accountStore.upsertAuthenticatedProfile(session.profile, savedAt);
+  const walletAccount = flags.isRecoveryCandidate
+    ? (accountStore.saveRecoveryWallet(session.profile, walletAddress, savedAt) || knownAccount)
+    : knownAccount;
+  const submissionId = crypto.randomUUID();
 
-  const normalizedUsername = normalizeUsername(session.profile.username);
-  const isKnownFollower = followerUsernames.has(normalizedUsername);
-  const isRecoveryCandidate = recoveryCandidateUsernames.has(normalizedUsername);
-  const savedRecord = upsertRecoveryRecord({
-    id: crypto.randomUUID(),
-    xUserId: String(session.profile.id),
-    xUsername: String(session.profile.username),
-    xName: String(session.profile.name || session.profile.username),
+  recoverySubmissionStore.createSubmission({
+    id: submissionId,
+    accountId: walletAccount?.id || knownAccount?.id || flags.account?.id || null,
+    xUserId: String(session.profile.id || "").trim(),
+    usernameAtSubmission: String(session.profile.username || "").trim(),
     walletAddress,
-    profileImageUrl: String(session.profile.profile_image_url || session.profile.profileImageUrl || ""),
-    verified: Boolean(session.profile.verified),
-    verifiedType: String(session.profile.verified_type || session.profile.verifiedType || ""),
-    authenticatedAt: session.authenticatedAt,
-    challengeId,
     signedMessage: challenge.message,
     signature,
-    isKnownFollower,
-    isRecoveryCandidate,
-    source: "x-follow-recovery",
+    wasKnownFollower: flags.isKnownFollower,
+    wasRecoveryCandidate: flags.isRecoveryCandidate,
+    status: "received",
+    submittedAt: savedAt,
+    createdAt: savedAt,
   });
 
-  saveRecoveryStore(recoveryStore);
-
   writeJson(response, 200, {
-    recordId: savedRecord.id,
-    walletAddress: savedRecord.walletAddress,
-    xUsername: savedRecord.xUsername,
-    xUserId: savedRecord.xUserId,
-    isKnownFollower: savedRecord.isKnownFollower,
-    isRecoveryCandidate: savedRecord.isRecoveryCandidate,
-    savedAt: savedRecord.updatedAt,
+    recordId: submissionId,
+    walletAddress,
+    xUsername: String(session.profile.username || "").trim(),
+    xUserId: String(session.profile.id || "").trim(),
+    isKnownFollower: flags.isKnownFollower,
+    isRecoveryCandidate: flags.isRecoveryCandidate,
+    savedAt,
+    account: serializeAccountForClient(walletAccount || knownAccount || flags.account),
+    existingSubmission: serializeSubmissionForClient(
+      recoverySubmissionStore.getLatestSubmissionForProfile(session.profile),
+    ),
   });
 }
 
@@ -1119,7 +1115,7 @@ function handleError(response, error) {
   const statusCode = error instanceof HttpError ? error.statusCode : 500;
   const headers = error instanceof HttpError ? error.headers : {};
   if (!(error instanceof HttpError) || statusCode >= 500) {
-    console.error("[X auth server]", error);
+    console.error("[Liberdus server]", error);
   }
   writeJson(response, statusCode, {
     error: getPublicErrorMessage(error, "Request failed."),
@@ -1189,7 +1185,10 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`X auth server listening at http://${HOST}:${PORT}`);
+  const accountStats = accountStore.getStats();
+  const submissionStats = recoverySubmissionStore.getStats();
+  console.log(`Liberdus server listening at http://${HOST}:${PORT}`);
+  console.log(`SQLite path: ${getDatabasePath()}`);
   console.log(`Allowed origins: ${getAllowedOrigins().join(", ")}`);
   console.log(`Allowed return URLs: ${getAllowedReturnUrls().join(", ")}`);
   console.log(`API key configured: ${getApiKey() ? "yes" : "no"}`);
@@ -1197,7 +1196,19 @@ server.listen(PORT, HOST, () => {
   console.log(`OAuth 1 callback URL: ${getCallbackUrl() || "(missing)"}`);
   console.log(`Default frontend return URL: ${getDefaultFrontendReturnUrl()}`);
   console.log(`Secure cookies: ${shouldUseSecureCookies() ? "yes" : "no"}`);
-  console.log(`Follower snapshot usernames loaded: ${followerUsernames.size}`);
-  console.log(`Recovery candidate usernames loaded: ${recoveryCandidateUsernames.size}`);
-  console.log(`Recovery store path: ${getRecoveryStorePath()}`);
+  console.log(`X accounts in DB: ${accountStats.accountCount}`);
+  console.log(`Current followers in DB: ${accountStats.followerCount}`);
+  console.log(`Recovery candidates in DB: ${accountStats.recoveryCandidateCount}`);
+  console.log(`Latest follower snapshot captured at: ${accountStats.latestSnapshotCapturedAt || "(none)"}`);
+  console.log(`Recovery submissions in DB: ${submissionStats.submissionCount}`);
+  console.log(`Legacy recovery submission import path: ${getLegacyRecoveryStorePath()}`);
+  if (accountStats.followerCount === 0 && fs.existsSync(getLegacyFollowerSnapshotPath())) {
+    console.log(`Follower DB is empty. Import a snapshot with: npm run followers:import`);
+  }
+  if (accountStats.recoveryCandidateCount === 0 && fs.existsSync(getLegacyRecoveryCandidatesPath())) {
+    console.log(`Recovery candidate DB is empty. Import candidates with: npm run recovery-candidates:import`);
+  }
+  if (submissionStats.submissionCount === 0 && fs.existsSync(getLegacyRecoveryStorePath())) {
+    console.log(`Recovery submissions DB is empty. Import legacy submissions with: npm run recovery-submissions:import`);
+  }
 });
