@@ -1,8 +1,0 @@
-{
-  "rounds": [
-    {
-      "epoch": 1,
-      "file": "./hardhat-round-1.claims.json"
-    }
-  ]
-}

@@ -239,21 +239,11 @@ npm run recovery-candidates:import -- --file /absolute/path/to/recovery-candidat
 npm run recovery-submissions:import -- --file /absolute/path/to/recovery-links.json
 ```
 
-## 5. Optional: Seed Old Claim Rounds
+## 5. Create Claim Rounds Through The Admin UI
 
-If you need to load existing file-backed claims into SQLite once:
+Claim rounds are created through the admin UI now.
 
-```bash
-npm run claim-rounds:import
-```
-
-By default that reads `frontend/claims/index.json`. If you need a different file, pass it explicitly:
-
-```bash
-npm run claim-rounds:import -- --manifest frontend/claims/generated/index.json
-```
-
-It stores rounds in:
+Upload a raw claims JSON file or build the round in the admin page, then fund and start the airdrop there. Finalized rounds are stored in:
 
 - `airdrop_rounds`
 - `airdrop_claims`

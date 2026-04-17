@@ -100,30 +100,20 @@ The contract will reject:
 - zero roots
 - past deadlines
 
-## 4. Publish The Raw Claims File
+## 4. Finalize In The Admin UI
 
-To make the claimant page aware of the new round:
+The claimant page now reads round data from the backend database, not from checked-in claim manifests.
 
-1. copy the raw claims JSON file into [frontend/claims](C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/frontend/claims)
-2. add a row to [index.json](C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/frontend/claims/index.json)
-
-Example:
-
-```json
-{
-  "epoch": 11,
-  "file": "./my-round.claims.json"
-}
-```
+After you upload or build the raw claims JSON in the admin page and successfully start the airdrop, the admin flow finalizes the round into SQLite automatically.
 
 Notes:
 
-- `epoch` must match the on-chain epoch you started
-- `file` must point to the raw claims JSON, not a generated proof artifact
+- the epoch in the raw claims JSON must still match the on-chain round you start
+- the same raw claims JSON should be kept available for auditability or future review, but it does not need to live under `frontend/claims/`
 
 ## 5. Verify
 
-After publishing:
+After finalizing the round:
 
 1. reload the claimant page
 2. connect a wallet that has an allocation
@@ -150,8 +140,7 @@ The normal workflow is:
 3. calculate the root in the admin page or with `npm run merkle`
 4. fund the contract
 5. start the new airdrop
-6. copy the same raw claims JSON into `frontend/claims/`
-7. add the epoch/file mapping to `frontend/claims/index.json`
+6. confirm the admin flow finalizes the round into the backend DB
 
 ## Frontend Config Publishing
 

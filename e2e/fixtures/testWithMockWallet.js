@@ -1,4 +1,3 @@
-const path = require("node:path");
 const { expect, test: base } = require("@playwright/test");
 const {
   clearE2EAirdropData,
@@ -11,6 +10,7 @@ const {
   RPC_URL,
   startBackendServer,
 } = require("../helpers/hardhatChain");
+const { writeClaimsFixtureFile } = require("../helpers/generatedClaimsFile");
 
 const STORAGE_KEY = "liberdus-airdrop-ui-config";
 const DEFAULT_UI_CONFIG = {
@@ -453,11 +453,37 @@ const test = base.extend({
       },
     });
   },
-  e2eClaimsFile: async ({}, use) => {
-    await use(path.join(process.cwd(), "frontend", "claims", "e2e", "epoch-1.claims.json"));
+  e2eClaimsFile: async ({}, use, testInfo) => {
+    const filePath = writeClaimsFixtureFile(testInfo, "epoch-1.claims.json", [
+      {
+        index: 0,
+        account: MOCK_WALLETS.claimant,
+        amount: "125",
+      },
+      {
+        index: 1,
+        account: MOCK_WALLETS.secondary,
+        amount: "90",
+      },
+    ]);
+
+    await use(filePath);
   },
-  e2eClaimsFileEpoch2: async ({}, use) => {
-    await use(path.join(process.cwd(), "frontend", "claims", "e2e", "epoch-2.claims.json"));
+  e2eClaimsFileEpoch2: async ({}, use, testInfo) => {
+    const filePath = writeClaimsFixtureFile(testInfo, "epoch-2.claims.json", [
+      {
+        index: 0,
+        account: MOCK_WALLETS.claimant,
+        amount: "200",
+      },
+      {
+        index: 1,
+        account: MOCK_WALLETS.secondary,
+        amount: "100",
+      },
+    ]);
+
+    await use(filePath);
   },
 });
 

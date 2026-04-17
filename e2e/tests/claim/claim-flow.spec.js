@@ -21,7 +21,13 @@ test("@smoke claimant can claim from the wrong network after wallet switch", asy
   await expect(page.getByRole("button", { name: "Switch Network to Claim" })).toBeVisible();
 
   await page.getByRole("button", { name: "Switch Network to Claim" }).click();
-  await expect(page.getByText("Claim complete.")).toBeVisible();
+  const celebrationDialog = page.getByRole("dialog", { name: "Claim complete" });
+  await expect(celebrationDialog).toBeVisible();
+  await expect(page.getByText("Keep following Liberdus on our social channels to stay eligible for future rewards.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Follow on X" })).toHaveAttribute("href", "https://x.com/liberdus");
+  await expect(page.getByRole("button", { name: "Back to rewards" })).toBeVisible();
+  await page.getByRole("button", { name: "Back to rewards" }).click();
+  await expect(celebrationDialog).toBeHidden();
   await expect(page.getByRole("button", { name: "Already Claimed" })).toBeVisible();
 
   await page.reload();

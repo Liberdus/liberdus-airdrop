@@ -188,19 +188,7 @@ npm run recovery-submissions:import
 
 That command reads `X_RECOVERY_STORE_FILE` as a legacy import source and writes those rows into `recovery_submissions`.
 
-To seed the DB with the existing file-backed claim rounds once, run:
-
-```bash
-npm run claim-rounds:import
-```
-
-By default that command reads `frontend/claims/index.json`. Pass `--manifest` if you need a different file, for example:
-
-```bash
-npm run claim-rounds:import -- --manifest frontend/claims/generated/index.json
-```
-
-The importer rebuilds each round server-side and stores finalized proofs in `airdrop_rounds` / `airdrop_claims`. If the imported root matches the live on-chain epoch, it also stores the current deadline from chain.
+Claim rounds are now created and persisted through the admin UI. Upload a raw claims JSON file or build the round in the admin page, then fund and start the airdrop there. The backend stores finalized proofs in `airdrop_rounds` / `airdrop_claims` when the round is finalized.
 
 Round identity is now namespaced by `deploymentKey`. The backend stores rounds under `(deploymentKey, epoch)`, so:
 
