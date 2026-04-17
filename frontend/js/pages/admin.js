@@ -65,7 +65,6 @@ const runtime = {
     dustTokenAddress: "",
     airdropAddress: "",
     apiBaseUrl: "",
-    claimsManifestPath: "./claims/index.json",
   },
   configSource: "template",
   tokenDecimals: 18,

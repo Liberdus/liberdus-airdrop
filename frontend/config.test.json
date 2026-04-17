@@ -8,13 +8,12 @@
     "symbol": "tBNB",
     "decimals": 18
   },
-  "apiBaseUrl": "",
-  "deploymentKey": "",
-  "claimsManifestPath": "./claims/index.json",
+  "apiBaseUrl": "https://att.liberdus.com/rewards-test",
+  "deploymentKey": "97:0x822c39efe9055593418071a80552760282fb1b71",
   "xAuth": {
     "enabled": true,
-    "redirectUri": "",
-    "backendUrl": ""
+    "redirectUri": "https://liberdus.com/rewards-test/",
+    "backendUrl": "https://att.liberdus.com/rewards-test"
   },
   "tokenAddress": "0x48463C89254d001Bdc6B5d2af92d531E60FB4f72",
   "airdropAddress": "0x822C39eFe9055593418071a80552760282fB1B71"

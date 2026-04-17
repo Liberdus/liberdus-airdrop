@@ -10,7 +10,6 @@
   },
   "apiBaseUrl": "",
   "deploymentKey": "",
-  "claimsManifestPath": "./claims/index.json",
   "xAuth": {
     "enabled": true,
     "redirectUri": "",

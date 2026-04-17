@@ -141,7 +141,6 @@ LIBERDUS_CHAIN_ID=1337
 LIBERDUS_RPC_URL=http://127.0.0.1:8545
 LIBERDUS_AIRDROP_ADDRESS=
 LIBERDUS_DEPLOYMENT_KEY=
-LIBERDUS_CLAIMS_MANIFEST=frontend/claims/generated/index.json
 LIBERDUS_TOKEN_DECIMALS=18
 X_FOLLOWER_SNAPSHOT_FILE=cache/x/liberdus-followers.json
 X_RECOVERY_CANDIDATES_FILE=cache/x/missing-address-usernames.json
@@ -195,7 +194,13 @@ To seed the DB with the existing file-backed claim rounds once, run:
 npm run claim-rounds:import
 ```
 
-That command reads `LIBERDUS_CLAIMS_MANIFEST`, rebuilds each round server-side, and stores finalized proofs in `airdrop_rounds` / `airdrop_claims`. If the imported root matches the live on-chain epoch, the importer also stores the current deadline from chain.
+By default that command reads `frontend/claims/index.json`. Pass `--manifest` if you need a different file, for example:
+
+```bash
+npm run claim-rounds:import -- --manifest frontend/claims/generated/index.json
+```
+
+The importer rebuilds each round server-side and stores finalized proofs in `airdrop_rounds` / `airdrop_claims`. If the imported root matches the live on-chain epoch, it also stores the current deadline from chain.
 
 Round identity is now namespaced by `deploymentKey`. The backend stores rounds under `(deploymentKey, epoch)`, so:
 

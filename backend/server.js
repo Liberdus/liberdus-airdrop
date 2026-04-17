@@ -881,7 +881,6 @@ function getHealthPayload(request) {
     airdropAddress: appConfig.airdropAddress,
     deploymentKey: appConfig.deploymentKey,
     apiBaseUrl: appConfig.apiBaseUrl,
-    claimsManifestPath: appConfig.claimsManifestPath,
     activeAuthSessions: authSessions.size,
     activeRequestTokens: requestTokens.size,
     activeChallenges: linkChallenges.size,

@@ -83,7 +83,7 @@ function parseArgs(argv, defaultManifestPath) {
 
 async function main() {
   const appConfig = loadAppConfig();
-  const defaultManifestPath = appConfig.claimsManifestPath || path.join("frontend", "claims", "index.json");
+  const defaultManifestPath = path.join("frontend", "claims", "index.json");
   const options = parseArgs(process.argv.slice(2), defaultManifestPath);
   const manifestPath = resolveRepoPath(options.manifestPath);
   const manifestDir = path.dirname(manifestPath);
@@ -137,8 +137,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  const appConfig = loadAppConfig();
-  usage(appConfig.claimsManifestPath || path.join("frontend", "claims", "index.json"));
+  usage(path.join("frontend", "claims", "index.json"));
   console.error(error.message || String(error));
   process.exitCode = 1;
 });

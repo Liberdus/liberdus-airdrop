@@ -36,7 +36,6 @@ export async function loadUiConfig() {
   const hasOverrideExplorerBaseUrl = Object.prototype.hasOwnProperty.call(overrides, "explorerBaseUrl");
 
   const config = {
-    claimsManifestPath: "./claims/index.json",
     apiBaseUrl: "",
     deploymentKey: "",
     ...loaded,
@@ -44,7 +43,6 @@ export async function loadUiConfig() {
     tokenAddress: normalizeAddress(overrides.tokenAddress || loaded.tokenAddress || ""),
     dustTokenAddress: normalizeAddress(overrides.dustTokenAddress || loaded.dustTokenAddress || ""),
     airdropAddress: normalizeAddress(overrides.airdropAddress || loaded.airdropAddress || ""),
-    claimsManifestPath: String(overrides.claimsManifestPath || loaded.claimsManifestPath || "./claims/index.json"),
     apiBaseUrl: String(
       overrides.apiBaseUrl
       || loaded.apiBaseUrl
@@ -96,7 +94,6 @@ export function saveAddressOverrides(overrides) {
       airdropAddress: normalizeAddress(overrides.airdropAddress || ""),
       tokenAddress: normalizeAddress(overrides.tokenAddress || ""),
       dustTokenAddress: normalizeAddress(overrides.dustTokenAddress || ""),
-      claimsManifestPath: String(overrides.claimsManifestPath || "./claims/index.json"),
       apiBaseUrl: String(overrides.apiBaseUrl || "").trim(),
     }),
   );

@@ -57,7 +57,6 @@ const runtime = {
     dustTokenAddress: "",
     airdropAddress: "",
     apiBaseUrl: "",
-    claimsManifestPath: "./claims/index.json",
     xAuth: {
       enabled: true,
       redirectUri: "",

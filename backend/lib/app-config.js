@@ -56,22 +56,6 @@ function normalizeInteger(value, fallbackValue = null) {
   return parsed;
 }
 
-function normalizeClaimsManifestPath(value) {
-  const rawValue = String(value || "").trim();
-  if (!rawValue) return "";
-
-  if (path.isAbsolute(rawValue)) {
-    return rawValue;
-  }
-
-  const withoutPrefix = rawValue.replace(/^\.\//u, "");
-  if (withoutPrefix.startsWith("frontend/") || withoutPrefix.startsWith("frontend\\")) {
-    return withoutPrefix;
-  }
-
-  return path.join("frontend", withoutPrefix);
-}
-
 function normalizeDeploymentKey(value) {
   return String(value || "").trim();
 }
@@ -105,7 +89,6 @@ function loadAppConfig() {
       || xAuthConfig.backendUrl
       || ""
     ).trim(),
-    claimsManifestPath: normalizeClaimsManifestPath(process.env.LIBERDUS_CLAIMS_MANIFEST || frontendConfig.claimsManifestPath || ""),
     tokenDecimals: normalizeInteger(process.env.LIBERDUS_TOKEN_DECIMALS, 18),
     deploymentKey: normalizeDeploymentKey(
       process.env.LIBERDUS_DEPLOYMENT_KEY

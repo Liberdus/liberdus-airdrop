@@ -10,7 +10,6 @@
   },
   "apiBaseUrl": "http://127.0.0.1:8787",
   "deploymentKey": "",
-  "claimsManifestPath": "./claims/generated/index.json",
   "xAuth": {
     "enabled": true,
     "redirectUri": "http://127.0.0.1:5502/frontend/",

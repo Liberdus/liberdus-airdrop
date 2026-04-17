@@ -5,19 +5,38 @@ This document covers:
 - running the backend with PM2
 - hosting both test and prod on the same server
 - loading the X account / wallet data into SQLite
+- using a GitHub Pages frontend that talks to the backend over HTTPS
 
 This repo is designed to work well with one backend process per environment. If you run both test and prod on the same server, keep them in separate directories with separate `.env` files, separate PM2 app names, separate backend ports, and separate SQLite files.
+
+Important deployment model for Liberdus:
+
+- the frontend is hosted separately on GitHub Pages / `liberdus.com`
+- the server only hosts the backend
+- nginx on the backend server exposes separate public backend base paths for test and prod
+- each backend process still binds only to `127.0.0.1` locally
+
+That means there are always two different URLs to think about:
+
+- bind URL:
+  - example: `http://127.0.0.1:8788`
+- public backend URL:
+  - example: `https://att.liberdus.com/rewards-test`
+
+`X_AUTH_HOST=127.0.0.1` is correct in this setup. It means the Node process listens only on loopback, and nginx proxies the public HTTPS URL to that local port.
 
 ## Recommended Layout
 
 Example:
 
 ```text
-/srv/liberdus-airdrop-prod
-/srv/liberdus-airdrop-test
+/home/liberdus/liberdus-airdrop-prod
+/home/liberdus/liberdus-airdrop-test
 ```
 
 Each directory should contain its own checkout of this repo.
+
+If you have a root-managed deployment layout such as `/srv/...`, that is also fine. On a shared server without `sudo`, user-owned directories under the deploy user home are safer and more practical.
 
 Recommended per-environment separation:
 
@@ -25,6 +44,8 @@ Recommended per-environment separation:
 - test backend port: `8788`
 - prod PM2 app name: `liberdus-airdrop-prod`
 - test PM2 app name: `liberdus-airdrop-test`
+- prod public backend base URL: `https://att.liberdus.com/rewards`
+- test public backend base URL: `https://att.liberdus.com/rewards-test`
 - prod DB path: `data/liberdus.sqlite` inside the prod checkout
 - test DB path: `data/liberdus.sqlite` inside the test checkout
 
@@ -53,9 +74,9 @@ X_AUTH_TRUST_PROXY=true
 
 X_API_KEY=
 X_API_SECRET=
-X_OAUTH1_CALLBACK_URL=https://airdrop.example.com/api/x/callback
-X_FRONTEND_RETURN_URL=https://airdrop.example.com/
-X_FRONTEND_RETURN_URLS=https://airdrop.example.com/
+X_OAUTH1_CALLBACK_URL=https://backend.example.com/api/x/callback
+X_FRONTEND_RETURN_URL=https://frontend.example.com/
+X_FRONTEND_RETURN_URLS=https://frontend.example.com/
 
 LIBERDUS_DB_PATH=data/liberdus.sqlite
 LIBERDUS_CHAIN_ID=56
@@ -72,7 +93,29 @@ Notes:
 - `LIBERDUS_DEPLOYMENT_KEY` is the namespace for stored airdrop rounds. Keep it stable for a real deployment.
 - `X_OAUTH1_CALLBACK_URL` must be the backend callback URL.
 - `X_FRONTEND_RETURN_URL` and `X_FRONTEND_RETURN_URLS` must exactly match the claim page URL users return to after X sign-in.
-- `X_AUTH_ALLOWED_ORIGINS` must match the frontend origin exactly.
+- `X_AUTH_ALLOWED_ORIGINS` must match the frontend origin exactly. This is origin-only, not path-based.
+- if your frontend is at `https://liberdus.com/rewards-test/`, then `X_AUTH_ALLOWED_ORIGINS` should be `https://liberdus.com`
+- if test and prod share the same frontend origin but different paths, the exact path separation is enforced by `X_FRONTEND_RETURN_URLS`
+
+### Current Liberdus Test Example
+
+For the current test deployment target:
+
+```dotenv
+X_AUTH_HOST=127.0.0.1
+X_AUTH_PORT=8788
+X_AUTH_ALLOWED_ORIGINS=https://liberdus.com
+X_AUTH_COOKIE_SECURE=true
+X_AUTH_TRUST_PROXY=true
+
+X_OAUTH1_CALLBACK_URL=https://att.liberdus.com/rewards-test/api/x/callback
+X_FRONTEND_RETURN_URL=https://liberdus.com/rewards-test/
+X_FRONTEND_RETURN_URLS=https://liberdus.com/rewards-test/
+
+LIBERDUS_CHAIN_ID=97
+LIBERDUS_AIRDROP_ADDRESS=0x822C39eFe9055593418071a80552760282fB1B71
+LIBERDUS_DEPLOYMENT_KEY=97:0x822c39efe9055593418071a80552760282fb1b71
+```
 
 ## 3. Configure the Frontend
 
@@ -100,12 +143,12 @@ Important fields:
   "rpcUrl": "https://your-rpc.example",
   "tokenAddress": "0x...",
   "airdropAddress": "0x...",
-  "apiBaseUrl": "https://airdrop.example.com",
+  "apiBaseUrl": "https://backend.example.com/path-prefix",
   "deploymentKey": "56:0x...",
   "xAuth": {
     "enabled": true,
-    "redirectUri": "https://airdrop.example.com/",
-    "backendUrl": "https://airdrop.example.com"
+    "redirectUri": "https://frontend.example.com/",
+    "backendUrl": "https://backend.example.com/path-prefix"
   }
 }
 ```
@@ -115,6 +158,33 @@ Notes:
 - `apiBaseUrl` is the backend base URL, not `/api`.
 - `xAuth.backendUrl` should normally match `apiBaseUrl`.
 - `deploymentKey` must match `LIBERDUS_DEPLOYMENT_KEY` in `.env`.
+- `xAuth.redirectUri` is the frontend page the user returns to after X login, not the backend callback.
+
+### Current Liberdus Test Frontend Example
+
+The current test frontend is hosted at:
+
+- `https://liberdus.com/rewards-test/`
+
+So the test frontend config should use:
+
+```json
+{
+  "apiBaseUrl": "https://att.liberdus.com/rewards-test",
+  "deploymentKey": "97:0x822c39efe9055593418071a80552760282fb1b71",
+  "xAuth": {
+    "enabled": true,
+    "redirectUri": "https://liberdus.com/rewards-test/",
+    "backendUrl": "https://att.liberdus.com/rewards-test"
+  }
+}
+```
+
+With that config, the frontend will call:
+
+- `https://att.liberdus.com/rewards-test/api/claims/wallet/...`
+- `https://att.liberdus.com/rewards-test/api/airdrop/rounds`
+- `https://att.liberdus.com/rewards-test/api/x/...`
 
 ## 4. Load Account Data Into SQLite
 
@@ -177,7 +247,13 @@ If you need to load existing file-backed claims into SQLite once:
 npm run claim-rounds:import
 ```
 
-That reads `LIBERDUS_CLAIMS_MANIFEST` and stores rounds in:
+By default that reads `frontend/claims/index.json`. If you need a different file, pass it explicitly:
+
+```bash
+npm run claim-rounds:import -- --manifest frontend/claims/generated/index.json
+```
+
+It stores rounds in:
 
 - `airdrop_rounds`
 - `airdrop_claims`
@@ -229,25 +305,31 @@ pm2 status
 
 ## 7. Recommended Nginx Layout
 
-A practical setup is:
+A practical setup for Liberdus is:
 
-- serve the static frontend from `frontend/`
-- proxy `/api/` to the local backend port
+- the frontend stays on GitHub Pages / `liberdus.com`
+- `att.liberdus.com` only proxies backend API traffic
+- nginx uses different path prefixes for test and prod
 
-Example prod server block:
+Recommended backend routing:
+
+- test public backend base URL: `https://att.liberdus.com/rewards-test`
+- prod public backend base URL: `https://att.liberdus.com/rewards`
+
+Example nginx config on `att.liberdus.com`:
 
 ```nginx
 server {
-    server_name airdrop.example.com;
+    server_name att.liberdus.com;
 
-    root /srv/liberdus-airdrop-prod/frontend;
-    index index.html;
-
-    location / {
-        try_files $uri $uri/ /index.html;
+    location /rewards-test/api/ {
+        proxy_pass http://127.0.0.1:8788/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    location /api/ {
+    location /rewards/api/ {
         proxy_pass http://127.0.0.1:8787/api/;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -256,34 +338,19 @@ server {
 }
 ```
 
-Example test server block:
+With that setup:
 
-```nginx
-server {
-    server_name test-airdrop.example.com;
+- test `apiBaseUrl` is `https://att.liberdus.com/rewards-test`
+- prod `apiBaseUrl` is `https://att.liberdus.com/rewards`
+- test callback URL is `https://att.liberdus.com/rewards-test/api/x/callback`
+- prod callback URL is `https://att.liberdus.com/rewards/api/x/callback`
 
-    root /srv/liberdus-airdrop-test/frontend;
-    index index.html;
+Remember:
 
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:8788/api/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-If you serve the frontend from site root like this, use:
-
-- `https://airdrop.example.com/` as the X return URL
-- `https://airdrop.example.com/api/x/callback` as the X callback URL
-
-If you instead serve it at `/frontend/`, then use `/frontend/` everywhere consistently. Exact match matters.
+- the Node server binds to `127.0.0.1`
+- nginx is what exposes the public HTTPS URL
+- `apiBaseUrl` must be the public backend base URL, not the loopback bind URL
+- `apiBaseUrl` must not include `/api`
 
 ## 8. Deploy / Update Flow
 
@@ -300,6 +367,12 @@ PM2_APP_NAME=liberdus-airdrop-prod npm run pm2:restart
 ```
 
 Use the matching PM2 app name for test.
+
+If the server clone cannot use GitHub SSH keys, set the checkout remote to HTTPS first:
+
+```bash
+git remote set-url origin https://github.com/Liberdus/liberdus-airdrop.git
+```
 
 ## 9. Sanity Checks
 
@@ -323,3 +396,4 @@ Check that the frontend config and backend `.env` agree on:
 - deployment key
 - backend base URL
 - X callback / return URLs
+- frontend origin vs `X_AUTH_ALLOWED_ORIGINS`
