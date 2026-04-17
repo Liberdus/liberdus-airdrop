@@ -97,6 +97,10 @@ const els = {
   adminTabPanels: [...document.querySelectorAll("[data-admin-panel]")],
   connectedAccount: document.getElementById("connectedAccount"),
   ownerAddress: document.getElementById("ownerAddress"),
+  pendingOwnerShell: document.getElementById("pendingOwnerShell"),
+  pendingOwnershipCurrentOwner: document.getElementById("pendingOwnershipCurrentOwner"),
+  pendingOwnershipPendingOwner: document.getElementById("pendingOwnershipPendingOwner"),
+  pendingAcceptOwnershipButton: document.getElementById("pendingAcceptOwnershipButton"),
   ownershipShell: document.getElementById("ownershipShell"),
   ownershipCurrentOwner: document.getElementById("ownershipCurrentOwner"),
   ownershipPendingOwner: document.getElementById("ownershipPendingOwner"),
@@ -1144,6 +1148,19 @@ function applyOwnershipSection() {
   }
 }
 
+function applyPendingOwnerSection() {
+  if (!els.pendingOwnerShell) return;
+
+  const normalizedPendingOwner = normalizeAddress(runtime.pendingOwner);
+  const hasPendingOwner = Boolean(normalizedPendingOwner && normalizedPendingOwner !== ethers.ZeroAddress);
+  const canAccept = Boolean(runtime.provider && runtime.account && isReadyChain() && isPendingOwner());
+
+  els.pendingOwnerShell.hidden = !canAccept;
+  els.pendingOwnershipCurrentOwner.textContent = runtime.owner || "-";
+  els.pendingOwnershipPendingOwner.textContent = hasPendingOwner ? normalizedPendingOwner : "No pending owner";
+  els.pendingAcceptOwnershipButton.disabled = !canAccept;
+}
+
 async function refreshEpochRows() {
   runtime.epochRows = [];
 
@@ -1200,49 +1217,57 @@ function applyOwnerGate() {
   els.connectedAccount.textContent = runtime.account || "No wallet connected";
 
   if (!runtime.provider) {
-    els.accountRole.textContent = "Wallet missing";
-    els.adminGateMessage.textContent = "Install a compatible browser wallet to manage the airdrop.";
-    els.switchNetworkGateButton.hidden = true;
-    els.adminShell.hidden = true;
-    return;
+      els.accountRole.textContent = "Wallet missing";
+      els.adminGateMessage.textContent = "Install a compatible browser wallet to manage the airdrop.";
+      els.switchNetworkGateButton.hidden = true;
+      els.adminShell.hidden = true;
+      els.pendingOwnerShell.hidden = true;
+      return;
   }
 
   if (!runtime.account) {
-    els.accountRole.textContent = "Disconnected";
-    els.adminGateMessage.textContent = "Connect the owner wallet to view admin controls.";
-    els.switchNetworkGateButton.hidden = true;
-    els.adminShell.hidden = true;
-    return;
+      els.accountRole.textContent = "Disconnected";
+      els.adminGateMessage.textContent = "Connect the owner or pending owner wallet to view admin controls.";
+      els.switchNetworkGateButton.hidden = true;
+      els.adminShell.hidden = true;
+      els.pendingOwnerShell.hidden = true;
+      return;
   }
 
   if (!isReadyChain()) {
-    els.accountRole.textContent = "Wrong network";
-    els.adminGateMessage.textContent = "Switch the connected wallet to the configured network to manage the airdrop.";
-    els.switchNetworkGateButton.hidden = false;
-    els.adminShell.hidden = true;
-    return;
+      els.accountRole.textContent = "Wrong network";
+      els.adminGateMessage.textContent = "Switch the connected wallet to the configured network to manage the airdrop.";
+      els.switchNetworkGateButton.hidden = false;
+      els.adminShell.hidden = true;
+      els.pendingOwnerShell.hidden = true;
+      return;
   }
 
   if (!runtime.owner) {
-    els.accountRole.textContent = "Connected wallet";
-    els.adminGateMessage.textContent = "Owner address is not available yet. Check the contract config.";
-    els.switchNetworkGateButton.hidden = true;
-    els.adminShell.hidden = true;
-    return;
+      els.accountRole.textContent = "Connected wallet";
+      els.adminGateMessage.textContent = "Owner address is not available yet. Check the contract config.";
+      els.switchNetworkGateButton.hidden = true;
+      els.adminShell.hidden = true;
+      els.pendingOwnerShell.hidden = true;
+      return;
   }
 
-  if (!isOwner()) {
-    els.accountRole.textContent = "Connected wallet";
-    els.adminGateMessage.textContent = "This page only unlocks for the current owner address.";
-    els.switchNetworkGateButton.hidden = true;
-    els.adminShell.hidden = true;
-    return;
+  if (!hasOwnershipAccess()) {
+      els.accountRole.textContent = "Connected wallet";
+      els.adminGateMessage.textContent = "This page only unlocks for the current owner or pending owner address.";
+      els.switchNetworkGateButton.hidden = true;
+      els.adminShell.hidden = true;
+      els.pendingOwnerShell.hidden = true;
+      return;
   }
 
-  els.accountRole.textContent = "Owner connected";
-  els.adminGateMessage.textContent = "Owner wallet detected. Admin controls are unlocked.";
+  els.accountRole.textContent = isOwner() ? "Owner connected" : "Pending owner connected";
+  els.adminGateMessage.textContent = isOwner()
+    ? "Owner wallet detected. Admin controls are unlocked."
+    : "Pending owner wallet detected. Accept ownership below to unlock the full admin workspace.";
   els.switchNetworkGateButton.hidden = true;
-  els.adminShell.hidden = false;
+  els.adminShell.hidden = !isOwner();
+  els.pendingOwnerShell.hidden = !isPendingOwner();
   updateStartAirdropButtonState();
 }
 
@@ -1318,7 +1343,27 @@ async function refreshPage() {
   renderUploadedRound();
   applyOwnerGate();
   applyOwnershipSection();
+  applyPendingOwnerSection();
   updateStartAirdropButtonState();
+}
+
+async function acceptOwnershipTransaction() {
+  const { airdrop } = getContracts({
+    config: runtime.config,
+    provider: runtime.provider,
+    signer: runtime.signer,
+    withSigner: true,
+  });
+  if (!airdrop) throw new Error("Airdrop address is not configured.");
+  if (!isPendingOwner()) throw new Error("Only the pending owner can accept ownership.");
+
+  await sendTransaction("Accept ownership", () => airdrop.acceptOwnership(), {
+    log: logger.log,
+    afterSuccess: async () => {
+      await refreshPage();
+    },
+    formatError: (error, label) => formatUiError(error, label, runtime),
+  });
 }
 
 async function fundAirdropAmountRaw(amountRaw, label = "Fund airdrop") {
@@ -1798,22 +1843,15 @@ function bindEvents() {
   els.acceptOwnershipForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      const { airdrop } = getContracts({
-        config: runtime.config,
-        provider: runtime.provider,
-        signer: runtime.signer,
-        withSigner: true,
-      });
-      if (!airdrop) throw new Error("Airdrop address is not configured.");
-      if (!isPendingOwner()) throw new Error("Only the pending owner can accept ownership.");
+      await acceptOwnershipTransaction();
+    } catch (error) {
+      reportError(error, "Accept ownership");
+    }
+  });
 
-      await sendTransaction("Accept ownership", () => airdrop.acceptOwnership(), {
-        log: logger.log,
-        afterSuccess: async () => {
-          await refreshPage();
-        },
-        formatError: (error, label) => formatUiError(error, label, runtime),
-      });
+  els.pendingAcceptOwnershipButton?.addEventListener("click", async () => {
+    try {
+      await acceptOwnershipTransaction();
     } catch (error) {
       reportError(error, "Accept ownership");
     }

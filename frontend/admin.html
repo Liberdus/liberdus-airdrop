@@ -84,8 +84,32 @@
           </article>
         </div>
 
-        <p id="adminGateMessage" class="hint">Connect the owner wallet to view admin controls.</p>
+        <p id="adminGateMessage" class="hint">Connect the owner or pending owner wallet to view admin controls.</p>
         <button id="switchNetworkGateButton" type="button" class="ghost" hidden>Switch to Configured Network</button>
+      </section>
+
+      <section id="pendingOwnerShell" class="frame" hidden>
+        <div class="panel-title-row">
+          <div>
+            <h2>Accept Ownership</h2>
+            <p class="hint">This wallet is the pending owner. Accept ownership here to unlock the full admin workspace.</p>
+          </div>
+        </div>
+
+        <div class="detail-list">
+          <article class="detail-item">
+            <h3>Current Owner</h3>
+            <p id="pendingOwnershipCurrentOwner">-</p>
+          </article>
+          <article class="detail-item">
+            <h3>Pending Owner</h3>
+            <p id="pendingOwnershipPendingOwner">-</p>
+          </article>
+        </div>
+
+        <div class="button-row">
+          <button id="pendingAcceptOwnershipButton" type="button">Accept Ownership</button>
+        </div>
       </section>
 
       <div id="adminShell" hidden>
