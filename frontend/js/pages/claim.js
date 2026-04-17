@@ -10,6 +10,7 @@ import {
 } from "../shared/format.js";
 import { sendTransaction } from "../shared/tx.js";
 import { createToastController } from "../shared/toast.js";
+import { createClaimConfettiController } from "../shared/claim-confetti.js";
 import {
   ensureProvider,
   connectWallet,
@@ -67,12 +68,29 @@ const runtime = {
   tokenDecimals: 18,
   tokenSymbol: "LIB",
   rounds: [],
+  claimInFlightEpoch: null,
+  claimCelebrationStage: "idle",
   isConnectingWallet: false,
   isConnectingX: false,
   isSubmittingXWalletLink: false,
   xSession: null,
   noticeTimerId: null,
+  celebrationHideTimerId: null,
+  celebrationAmountFrameId: null,
+  celebrationWalletGlowTimerId: null,
+  celebrationRainTimerIds: [],
+  celebrationFocusElement: null,
 };
+
+const CLAIM_CELEBRATION_HIDE_DELAY = 220;
+const CLAIM_AMOUNT_ANIMATION_MS = 1350;
+const TOKEN_RAIN_IMAGE_URL = new URL("../../assets/liberdus-logo.png", import.meta.url).href;
+const DEFAULT_CELEBRATION_MESSAGE = "Keep following Liberdus on our social channels to stay eligible for future rewards.";
+const DEFAULT_SOCIAL_LINKS = Object.freeze([
+  { label: "Follow on X", href: "https://x.com/liberdus" },
+  { label: "Join Telegram", href: "https://t.me/LiberdusOfficial" },
+  { label: "Join Discord", href: "https://liberdus.com/discord" },
+]);
 
 const els = {
   claimHeader: document.getElementById("claimHeader"),
@@ -89,6 +107,20 @@ const els = {
   claimToast: document.getElementById("claimToast"),
   claimToastMessage: document.getElementById("claimToastMessage"),
   claimToastClose: document.getElementById("claimToastClose"),
+  claimCelebration: document.getElementById("claimCelebration"),
+  claimCelebrationDialog: document.getElementById("claimCelebrationDialog"),
+  claimCelebrationCoreToken: document.getElementById("claimCelebrationCoreToken"),
+  claimCelebrationConfetti: document.getElementById("claimCelebrationConfetti"),
+  claimCelebrationKicker: document.getElementById("claimCelebrationKicker"),
+  claimCelebrationTitle: document.getElementById("claimCelebrationTitle"),
+  claimCelebrationAmount: document.getElementById("claimCelebrationAmount"),
+  claimCelebrationMessage: document.getElementById("claimCelebrationMessage"),
+  claimCelebrationHint: document.getElementById("claimCelebrationHint"),
+  claimCelebrationLinks: document.getElementById("claimCelebrationLinks"),
+  claimCelebrationRain: document.getElementById("claimCelebrationRain"),
+  claimCelebrationFlight: document.getElementById("claimCelebrationFlight"),
+  claimCelebrationClose: document.getElementById("claimCelebrationClose"),
+  claimCelebrationContinue: document.getElementById("claimCelebrationContinue"),
   switchNetworkButton: document.getElementById("switchNetworkButton"),
   xAuthCard: document.getElementById("xAuthCard"),
   xAuthHint: document.getElementById("xAuthHint"),
@@ -107,9 +139,14 @@ const toast = createToastController({
   messageElement: els.claimToastMessage,
   closeButton: els.claimToastClose,
 });
+const claimCelebrationConfetti = createClaimConfettiController(els.claimCelebrationConfetti);
 
 function setMessage(message, type = "info") {
   if (!els.claimToast) return;
+
+  if (message.startsWith("Claim:") && runtime.claimCelebrationStage !== "idle") {
+    return;
+  }
 
   let nextMessage = message;
   if (message.startsWith("Claim: submitted")) {
@@ -137,6 +174,391 @@ function clearMessage() {
     runtime.noticeTimerId = null;
   }
   toast.hide();
+}
+
+function isSafeExternalUrl(value) {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function getCelebrationConfig() {
+  const socials = runtime.config?.socials && typeof runtime.config.socials === "object"
+    ? runtime.config.socials
+    : {};
+  const rawLinks = Array.isArray(socials.links) ? socials.links : DEFAULT_SOCIAL_LINKS;
+  const links = rawLinks
+    .map((entry) => {
+      const label = String(entry?.label || "").trim();
+      const href = String(entry?.href || entry?.url || "").trim();
+      if (!label || !isSafeExternalUrl(href)) return null;
+      return { label, href };
+    })
+    .filter(Boolean)
+    .slice(0, 4);
+
+  return {
+    message: String(socials.message || "").trim() || DEFAULT_CELEBRATION_MESSAGE,
+    links: links.length ? links : DEFAULT_SOCIAL_LINKS,
+  };
+}
+
+function getWalletDisplayName() {
+  return String(runtime.selectedWalletName || "").trim() || "your wallet";
+}
+
+function renderClaimCelebrationLinks(links) {
+  if (!els.claimCelebrationLinks) return;
+
+  els.claimCelebrationLinks.replaceChildren();
+
+  for (const link of links) {
+    const anchor = document.createElement("a");
+    anchor.className = "claim-celebration-link";
+    anchor.href = link.href;
+    anchor.target = "_blank";
+    anchor.rel = "noreferrer noopener";
+    anchor.textContent = link.label;
+    els.claimCelebrationLinks.appendChild(anchor);
+  }
+}
+
+function isClaimCelebrationOpen() {
+  return Boolean(els.claimCelebration && !els.claimCelebration.hidden);
+}
+
+function isClaimCelebrationDismissible() {
+  return runtime.claimCelebrationStage === "success";
+}
+
+function stopClaimCelebrationAmountAnimation() {
+  if (!runtime.celebrationAmountFrameId) return;
+  window.cancelAnimationFrame(runtime.celebrationAmountFrameId);
+  runtime.celebrationAmountFrameId = null;
+}
+
+function stopWalletReceiveEffect() {
+  if (runtime.celebrationWalletGlowTimerId) {
+    window.clearTimeout(runtime.celebrationWalletGlowTimerId);
+    runtime.celebrationWalletGlowTimerId = null;
+  }
+  els.connectButton?.classList.remove("is-receiving-claim");
+}
+
+function clearClaimCelebrationRainTimers() {
+  if (!Array.isArray(runtime.celebrationRainTimerIds) || !runtime.celebrationRainTimerIds.length) {
+    runtime.celebrationRainTimerIds = [];
+    return;
+  }
+
+  for (const timerId of runtime.celebrationRainTimerIds) {
+    window.clearTimeout(timerId);
+  }
+  runtime.celebrationRainTimerIds = [];
+}
+
+function clearClaimCelebrationEffects() {
+  stopClaimCelebrationAmountAnimation();
+  stopWalletReceiveEffect();
+  clearClaimCelebrationRainTimers();
+  claimCelebrationConfetti.clear();
+  els.claimCelebrationRain?.replaceChildren();
+  els.claimCelebrationFlight?.replaceChildren();
+}
+
+function renderClaimCelebrationRain() {
+  if (!els.claimCelebrationRain) return;
+
+  els.claimCelebrationRain.replaceChildren();
+
+  const isCompact = window.matchMedia("(max-width: 780px)").matches;
+  const rainHeight = Math.max(els.claimCelebrationRain.getBoundingClientRect().height || 0, 420);
+  const tokenFloorInset = isCompact ? 3 : 4;
+  const tokenCount = isCompact ? 24 : 42;
+
+  for (let index = 0; index < tokenCount; index += 1) {
+    const tokenSize = isCompact
+      ? Math.round(16 + (Math.random() * 14))
+      : Math.round(18 + (Math.random() * 18));
+    const tokenScale = Number((0.74 + (Math.random() * 0.32)).toFixed(2));
+    const tokenDrift = Math.round((-28 + (Math.random() * 56)) * (isCompact ? 0.8 : 1));
+    const tokenBounceDrift = tokenDrift + Math.round((-12 + (Math.random() * 24)) * (isCompact ? 0.8 : 1));
+    const tokenEndDrift = tokenBounceDrift + Math.round((-10 + (Math.random() * 20)) * (isCompact ? 0.8 : 1));
+    const tokenStartTop = -1 * (tokenSize + Math.round(72 + (Math.random() * 48)));
+    const tokenFloorTop = Math.round(rainHeight - tokenSize - tokenFloorInset);
+    const tokenBounceTop = tokenFloorTop - Math.max(12, Math.round(tokenSize * 0.9));
+    const tokenExitTop = rainHeight + tokenSize + Math.round(18 + (Math.random() * 28));
+
+    const spawnTimerId = window.setTimeout(() => {
+      runtime.celebrationRainTimerIds = runtime.celebrationRainTimerIds.filter((timerId) => timerId !== spawnTimerId);
+      if (!els.claimCelebrationRain || els.claimCelebration?.hidden) return;
+
+      const token = document.createElement("span");
+      token.className = "claim-celebration-token";
+      token.style.backgroundImage = `url("${TOKEN_RAIN_IMAGE_URL}")`;
+      token.style.top = `${tokenStartTop}px`;
+      token.style.setProperty("--token-left", `${Math.round(Math.random() * 100)}%`);
+      token.style.setProperty("--token-duration", `${(3.35 + (Math.random() * 1.4)).toFixed(2)}s`);
+      token.style.setProperty("--token-size", `${tokenSize}px`);
+      token.style.setProperty("--token-opacity", `${(0.48 + (Math.random() * 0.34)).toFixed(2)}`);
+      token.style.setProperty("--token-scale", `${tokenScale}`);
+      token.style.setProperty("--token-start-top", `${tokenStartTop}px`);
+      token.style.setProperty("--token-floor-top", `${tokenFloorTop}px`);
+      token.style.setProperty("--token-bounce-top", `${tokenBounceTop}px`);
+      token.style.setProperty("--token-exit-top", `${tokenExitTop}px`);
+      token.style.setProperty("--token-drift", `${tokenDrift}px`);
+      token.style.setProperty("--token-drift-bounce", `${tokenBounceDrift}px`);
+      token.style.setProperty("--token-drift-end", `${tokenEndDrift}px`);
+      token.style.setProperty("--token-rotate-start", `${Math.round(Math.random() * 160)}deg`);
+      token.style.setProperty("--token-rotate-mid", `${Math.round(220 + (Math.random() * 120))}deg`);
+      token.style.setProperty("--token-rotate-bounce", `${Math.round(320 + (Math.random() * 120))}deg`);
+      token.style.setProperty("--token-rotate-end", `${Math.round(320 + (Math.random() * 520))}deg`);
+      token.addEventListener("animationend", () => {
+        token.remove();
+      }, { once: true });
+      els.claimCelebrationRain.appendChild(token);
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          if (token.isConnected) {
+            token.classList.add("is-falling");
+          }
+        });
+      });
+    }, Math.round(Math.random() * 200));
+
+    runtime.celebrationRainTimerIds.push(spawnTimerId);
+  }
+}
+
+function triggerWalletClaimAbsorption() {
+  if (!els.claimCelebration || !els.claimCelebrationDialog || !els.claimCelebrationFlight || !els.connectButton) {
+    return;
+  }
+
+  els.claimCelebrationFlight.replaceChildren();
+
+  const overlayRect = els.claimCelebration.getBoundingClientRect();
+  const dialogRect = els.claimCelebrationDialog.getBoundingClientRect();
+  const walletRect = els.connectButton.getBoundingClientRect();
+  const startX = (dialogRect.left + (dialogRect.width / 2)) - overlayRect.left;
+  const startY = (dialogRect.top + Math.min(dialogRect.height * 0.34, 220)) - overlayRect.top;
+  const targetX = (walletRect.left + (walletRect.width / 2)) - overlayRect.left;
+  const targetY = (walletRect.top + (walletRect.height / 2)) - overlayRect.top;
+  const tokenCount = window.matchMedia("(max-width: 780px)").matches ? 7 : 10;
+  const fragment = document.createDocumentFragment();
+
+  for (let index = 0; index < tokenCount; index += 1) {
+    const token = document.createElement("span");
+    token.className = "claim-celebration-flight-token";
+    token.style.backgroundImage = `url("${TOKEN_RAIN_IMAGE_URL}")`;
+    token.style.left = `${startX + (-36 + (Math.random() * 72))}px`;
+    token.style.top = `${startY + (-28 + (Math.random() * 56))}px`;
+    token.style.setProperty("--flight-x", `${(targetX - startX) + (-12 + (Math.random() * 24))}px`);
+    token.style.setProperty("--flight-y", `${(targetY - startY) + (-10 + (Math.random() * 20))}px`);
+    token.style.setProperty("--flight-delay", `${(0.38 + (index * 0.055)).toFixed(2)}s`);
+    token.style.setProperty("--flight-duration", `${(0.7 + (Math.random() * 0.18)).toFixed(2)}s`);
+    token.style.setProperty("--flight-size", `${Math.round(24 + (Math.random() * 16))}px`);
+    fragment.appendChild(token);
+  }
+
+  els.claimCelebrationFlight.appendChild(fragment);
+  els.connectButton.classList.add("is-receiving-claim");
+  runtime.celebrationWalletGlowTimerId = window.setTimeout(() => {
+    stopWalletReceiveEffect();
+  }, 1500);
+}
+
+function animateClaimCelebrationAmount(amountRaw) {
+  if (!els.claimCelebrationAmount) return;
+
+  stopClaimCelebrationAmountAnimation();
+
+  const finalText = formatTokenAmount(amountRaw, runtime.tokenDecimals, runtime.tokenSymbol);
+  const targetValue = Number(ethers.formatUnits(amountRaw, runtime.tokenDecimals));
+  if (!Number.isFinite(targetValue) || Math.abs(targetValue) > 1e12) {
+    els.claimCelebrationAmount.textContent = finalText;
+    return;
+  }
+
+  const decimalPart = String(ethers.formatUnits(amountRaw, runtime.tokenDecimals)).split(".")[1] || "";
+  const maximumFractionDigits = decimalPart
+    ? Math.min(decimalPart.replace(/0+$/u, "").length || 0, 4)
+    : 0;
+  const formatter = new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
+  });
+  const startTime = performance.now();
+
+  const frame = (now) => {
+    const progress = Math.min((now - startTime) / CLAIM_AMOUNT_ANIMATION_MS, 1);
+    const eased = 1 - ((1 - progress) ** 4);
+    const currentValue = targetValue * eased;
+    els.claimCelebrationAmount.textContent = `${formatter.format(currentValue)} ${runtime.tokenSymbol}`;
+
+    if (progress < 1) {
+      runtime.celebrationAmountFrameId = window.requestAnimationFrame(frame);
+      return;
+    }
+
+    runtime.celebrationAmountFrameId = null;
+    els.claimCelebrationAmount.textContent = finalText;
+  };
+
+  runtime.celebrationAmountFrameId = window.requestAnimationFrame(frame);
+}
+
+function openClaimCelebration() {
+  if (!els.claimCelebration) return;
+
+  if (runtime.celebrationHideTimerId) {
+    window.clearTimeout(runtime.celebrationHideTimerId);
+    runtime.celebrationHideTimerId = null;
+  }
+
+  if (!els.claimCelebration.hidden) return;
+
+  runtime.celebrationFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  els.claimCelebration.hidden = false;
+  document.body.classList.add("claim-celebration-open");
+  window.requestAnimationFrame(() => {
+    els.claimCelebration.classList.add("is-visible");
+    els.claimCelebrationDialog?.focus();
+  });
+}
+
+function setClaimCelebrationStage({
+  stage,
+  kicker,
+  title,
+  message,
+  hint = "",
+  dismissible = false,
+  amountRaw = null,
+  links = [],
+}) {
+  if (!els.claimCelebration) return;
+
+  openClaimCelebration();
+  runtime.claimCelebrationStage = stage;
+  els.claimCelebration.dataset.stage = stage;
+
+  if (els.claimCelebrationKicker) {
+    els.claimCelebrationKicker.textContent = kicker;
+  }
+  if (els.claimCelebrationTitle) {
+    els.claimCelebrationTitle.textContent = title;
+  }
+  if (els.claimCelebrationMessage) {
+    els.claimCelebrationMessage.textContent = message;
+  }
+  if (els.claimCelebrationHint) {
+    els.claimCelebrationHint.hidden = !hint;
+    els.claimCelebrationHint.textContent = hint;
+  }
+
+  if (els.claimCelebrationAmount) {
+    const showAmount = amountRaw != null;
+    els.claimCelebrationAmount.hidden = !showAmount;
+    els.claimCelebrationAmount.textContent = showAmount
+      ? formatTokenAmount(amountRaw, runtime.tokenDecimals, runtime.tokenSymbol)
+      : "";
+  }
+
+  if (els.claimCelebrationClose) {
+    els.claimCelebrationClose.hidden = !dismissible;
+  }
+  if (els.claimCelebrationContinue) {
+    els.claimCelebrationContinue.hidden = !dismissible;
+  }
+  if (els.claimCelebrationLinks) {
+    const showLinks = dismissible && links.length > 0;
+    els.claimCelebrationLinks.hidden = !showLinks;
+    if (showLinks) {
+      renderClaimCelebrationLinks(links);
+    } else {
+      els.claimCelebrationLinks.replaceChildren();
+    }
+  }
+}
+
+function showClaimCelebrationAwaitingWallet() {
+  clearClaimCelebrationEffects();
+  const walletName = getWalletDisplayName();
+  setClaimCelebrationStage({
+    stage: "wallet",
+    kicker: "Ready to unlock",
+    title: `Confirm in ${walletName}`,
+    message: `Approve this claim in ${walletName} to release your LIB.`,
+    hint: `If the prompt did not appear, open ${walletName} and confirm the transaction there.`,
+  });
+}
+
+function showClaimCelebrationPending() {
+  clearClaimCelebrationEffects();
+  setClaimCelebrationStage({
+    stage: "pending",
+    kicker: "Claim submitted",
+    title: "Unlocking your LIB",
+    message: "Your transaction is onchain now. We will fire the full reward moment as soon as it confirms.",
+    hint: "Keep this tab open for a second while the network finalizes it.",
+  });
+}
+
+function showClaimCelebrationSuccess(round) {
+  if (!round) return;
+
+  clearClaimCelebrationEffects();
+  const celebration = getCelebrationConfig();
+  setClaimCelebrationStage({
+    stage: "success",
+    kicker: "Reward unlocked",
+    title: "Claim complete",
+    message: celebration.message,
+    dismissible: true,
+    amountRaw: round.amountRaw,
+    links: celebration.links,
+  });
+  window.requestAnimationFrame(() => {
+    claimCelebrationConfetti.celebrate();
+    els.claimCelebrationContinue?.focus();
+  });
+}
+
+function hideClaimCelebration({ restoreFocus = true, immediate = false } = {}) {
+  if (!els.claimCelebration) return;
+
+  if (runtime.celebrationHideTimerId) {
+    window.clearTimeout(runtime.celebrationHideTimerId);
+    runtime.celebrationHideTimerId = null;
+  }
+
+  const focusTarget = restoreFocus ? runtime.celebrationFocusElement : null;
+  const finalize = () => {
+    els.claimCelebration.hidden = true;
+    els.claimCelebration.classList.remove("is-visible");
+    els.claimCelebration.dataset.stage = "idle";
+    document.body.classList.remove("claim-celebration-open");
+    clearClaimCelebrationEffects();
+    runtime.claimCelebrationStage = "idle";
+    runtime.celebrationHideTimerId = null;
+    runtime.celebrationFocusElement = null;
+    if (focusTarget?.isConnected) {
+      focusTarget.focus();
+    }
+  };
+
+  if (immediate || els.claimCelebration.hidden) {
+    finalize();
+    return;
+  }
+
+  els.claimCelebration.classList.remove("is-visible");
+  document.body.classList.remove("claim-celebration-open");
+  runtime.celebrationHideTimerId = window.setTimeout(finalize, CLAIM_CELEBRATION_HIDE_DELAY);
 }
 
 function ensureReadProvider() {
@@ -604,21 +1026,25 @@ function getVisibleRounds() {
 }
 
 function getRoundActionMeta(round) {
+  if (runtime.claimInFlightEpoch != null && Number(runtime.claimInFlightEpoch) === Number(round.epoch)) {
+    return { label: "Unlocking...", disabled: true, className: "is-processing" };
+  }
+
   switch (round.status) {
     case "claimable":
-      return { label: isReadyChain() ? "Claim" : "Switch Network to Claim", disabled: false };
+      return { label: isReadyChain() ? "Claim" : "Switch Network to Claim", disabled: false, className: "" };
     case "claimed":
-      return { label: "Already Claimed", disabled: true };
+      return { label: "Already Claimed", disabled: true, className: "" };
     case "mismatch":
-      return { label: "Unavailable", disabled: true };
+      return { label: "Unavailable", disabled: true, className: "" };
     case "ambiguous":
-      return { label: "Unavailable", disabled: true };
+      return { label: "Unavailable", disabled: true, className: "" };
     case "no-allocation":
-      return { label: "Not Eligible", disabled: true };
+      return { label: "Not Eligible", disabled: true, className: "" };
     case "connect":
-      return { label: "Connect Wallet", disabled: true };
+      return { label: "Connect Wallet", disabled: true, className: "" };
     default:
-      return { label: "Unavailable", disabled: true };
+      return { label: "Unavailable", disabled: true, className: "" };
   }
 }
 
@@ -655,7 +1081,7 @@ function renderRoundList() {
           <p class="round-meta">${round.deadline ? `Ends ${formatDeadlineShort(round.deadline)}` : "Not scheduled"}</p>
           <button
             type="button"
-            class="round-claim-button"
+            class="round-claim-button ${action.className || ""}"
             data-round-claim="${round.epoch || ""}"
             ${action.disabled ? "disabled" : ""}
           >${action.label}</button>
@@ -799,23 +1225,44 @@ async function claimRound(roundEpoch) {
 
   if (!airdrop) throw new Error("Airdrop address is not configured.");
 
-  await sendTransaction(
-    "Claim",
-    () => airdrop.claim(
-      BigInt(round.epoch),
-      BigInt(round.entry.index),
-      normalizeAddress(round.entry.account),
-      BigInt(round.entry.amountRaw),
-      round.entry.proof,
-    ),
-    {
-      log: logger.log,
-      afterSuccess: async () => {
-        await refreshPage();
+  const claimedRound = {
+    epoch: round.epoch,
+    amountRaw: round.amountRaw,
+  };
+  runtime.claimInFlightEpoch = roundEpoch;
+  renderRoundList();
+  showClaimCelebrationAwaitingWallet();
+
+  try {
+    await sendTransaction(
+      "Claim",
+      () => airdrop.claim(
+        BigInt(round.epoch),
+        BigInt(round.entry.index),
+        normalizeAddress(round.entry.account),
+        BigInt(round.entry.amountRaw),
+        round.entry.proof,
+      ),
+      {
+        log: logger.log,
+        afterSubmit: async () => {
+          showClaimCelebrationPending();
+        },
+        afterSuccess: async () => {
+          await refreshPage();
+          runtime.claimInFlightEpoch = null;
+          renderRoundList();
+          showClaimCelebrationSuccess(claimedRound);
+        },
+        formatError: (error, label) => formatUiError(error, label, runtime),
       },
-      formatError: (error, label) => formatUiError(error, label, runtime),
-    },
-  );
+    );
+  } catch (error) {
+    runtime.claimInFlightEpoch = null;
+    renderRoundList();
+    hideClaimCelebration({ restoreFocus: false, immediate: true });
+    throw error;
+  }
 }
 
 function bindEvents() {
@@ -852,6 +1299,8 @@ function bindEvents() {
 
   els.disconnectButton?.addEventListener("click", async () => {
     try {
+      runtime.claimInFlightEpoch = null;
+      hideClaimCelebration({ restoreFocus: false, immediate: true });
       await disconnectWallet(runtime);
       await refreshPage();
       logger.log("Wallet disconnected.");
@@ -907,6 +1356,25 @@ function bindEvents() {
     }
   });
 
+  els.claimCelebrationClose?.addEventListener("click", () => {
+    if (!isClaimCelebrationDismissible()) return;
+    hideClaimCelebration();
+  });
+
+  els.claimCelebrationContinue?.addEventListener("click", () => {
+    if (!isClaimCelebrationDismissible()) return;
+    hideClaimCelebration();
+  });
+
+  els.claimCelebration?.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (!isClaimCelebrationDismissible()) return;
+    if (target.dataset.claimCelebrationClose === "true" || target === els.claimCelebration) {
+      hideClaimCelebration();
+    }
+  });
+
   els.adminPageButton?.addEventListener("click", () => {
     window.location.href = "./admin.html";
   });
@@ -922,10 +1390,14 @@ function bindEvents() {
 
   bindWalletEvents({
     onAccountsChanged: async () => {
+      runtime.claimInFlightEpoch = null;
+      hideClaimCelebration({ restoreFocus: false, immediate: true });
       await refreshPage();
       clearMessage();
     },
     onChainChanged: async (chainId) => {
+      runtime.claimInFlightEpoch = null;
+      hideClaimCelebration({ restoreFocus: false, immediate: true });
       resetProvider(runtime, chainId ? Number.parseInt(chainId, 16) : null);
       await refreshPage();
       clearMessage();
@@ -941,7 +1413,13 @@ function bindEvents() {
     setWalletMenuOpen(false);
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") setWalletMenuOpen(false);
+    if (event.key !== "Escape") return;
+    if (isClaimCelebrationOpen() && isClaimCelebrationDismissible()) {
+      hideClaimCelebration();
+      return;
+    }
+    if (isClaimCelebrationOpen()) return;
+    setWalletMenuOpen(false);
   });
 }
 
