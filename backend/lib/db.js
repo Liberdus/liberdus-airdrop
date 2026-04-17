@@ -4,7 +4,7 @@ const path = require("node:path");
 const Database = require("better-sqlite3");
 
 const DEFAULT_DB_PATH = path.join("data", "liberdus.sqlite");
-const BASE_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 function getRepoRoot() {
   return path.resolve(__dirname, "..", "..");
 }
@@ -87,7 +87,8 @@ function createAirdropSchema(db) {
     CREATE TABLE IF NOT EXISTS airdrop_rounds (
       id INTEGER PRIMARY KEY,
       deployment_key TEXT NOT NULL,
-      epoch INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'deployed')),
+      epoch INTEGER,
       merkle_root TEXT NOT NULL,
       deadline INTEGER NOT NULL DEFAULT 0,
       claim_count INTEGER NOT NULL DEFAULT 0,
@@ -104,29 +105,43 @@ function createAirdropSchema(db) {
     );
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_airdrop_rounds_deployment_epoch
-      ON airdrop_rounds(deployment_key, epoch);
+      ON airdrop_rounds(deployment_key, epoch)
+      WHERE epoch IS NOT NULL;
 
     CREATE INDEX IF NOT EXISTS idx_airdrop_rounds_deployment_merkle_root
       ON airdrop_rounds(deployment_key, LOWER(merkle_root));
 
     CREATE INDEX IF NOT EXISTS idx_airdrop_rounds_deployment_contract_epoch
-      ON airdrop_rounds(deployment_key, LOWER(contract_address), epoch);
+      ON airdrop_rounds(deployment_key, LOWER(contract_address), epoch)
+      WHERE epoch IS NOT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_airdrop_rounds_deployment_status
+      ON airdrop_rounds(deployment_key, status, updated_at DESC, id DESC);
 
     CREATE TABLE IF NOT EXISTS airdrop_claims (
+      id INTEGER PRIMARY KEY,
       round_id INTEGER NOT NULL REFERENCES airdrop_rounds(id) ON DELETE CASCADE,
       claim_index INTEGER NOT NULL,
       wallet_address TEXT NOT NULL,
       amount_raw TEXT NOT NULL,
       proof_json TEXT NOT NULL,
+      claimed_at TEXT,
+      claimed_tx_hash TEXT,
       created_at TEXT NOT NULL,
-      PRIMARY KEY (round_id, claim_index)
+      updated_at TEXT NOT NULL
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_airdrop_claims_round_index
+      ON airdrop_claims(round_id, claim_index);
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_airdrop_claims_round_wallet
       ON airdrop_claims(round_id, LOWER(wallet_address));
 
     CREATE INDEX IF NOT EXISTS idx_airdrop_claims_wallet_lookup
       ON airdrop_claims(LOWER(wallet_address));
+
+    CREATE INDEX IF NOT EXISTS idx_airdrop_claims_round_lookup
+      ON airdrop_claims(round_id, claim_index, id);
   `);
 }
 
@@ -144,8 +159,11 @@ function dropKnownTablesAndIndexes(db) {
     DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_epoch;
     DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_merkle_root;
     DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_contract_epoch;
+    DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_status;
+    DROP INDEX IF EXISTS idx_airdrop_claims_round_index;
     DROP INDEX IF EXISTS idx_airdrop_claims_round_wallet;
     DROP INDEX IF EXISTS idx_airdrop_claims_wallet_lookup;
+    DROP INDEX IF EXISTS idx_airdrop_claims_round_lookup;
     DROP TABLE IF EXISTS airdrop_claims;
     DROP TABLE IF EXISTS airdrop_rounds;
     DROP TABLE IF EXISTS airdrop_claims_legacy;
@@ -191,27 +209,154 @@ function hasCurrentSchema(db) {
   `).all().map((row) => row.name);
 
   const airdropRoundColumns = getTableColumnNames(db, "airdrop_rounds");
+  const airdropClaimColumns = getTableColumnNames(db, "airdrop_claims");
 
   return tableNames.includes("x_accounts")
     && tableNames.includes("recovery_submissions")
     && tableNames.includes("airdrop_rounds")
     && tableNames.includes("airdrop_claims")
-    && airdropRoundColumns.includes("deployment_key");
+    && airdropRoundColumns.includes("deployment_key")
+    && airdropRoundColumns.includes("status")
+    && airdropClaimColumns.includes("id")
+    && airdropClaimColumns.includes("updated_at");
 }
 
 function resetToCurrentSchema(db) {
   dropKnownTablesAndIndexes(db);
   initializeSchema(db);
-  setSchemaVersion(db, BASE_SCHEMA_VERSION);
+  setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
+}
+
+function migrateAirdropSchemaV2(db) {
+  const roundColumns = getTableColumnNames(db, "airdrop_rounds");
+  const claimColumns = getTableColumnNames(db, "airdrop_claims");
+
+  if (
+    roundColumns.includes("status")
+    && claimColumns.includes("id")
+    && claimColumns.includes("updated_at")
+  ) {
+    return;
+  }
+
+  if (!roundColumns.includes("deployment_key")) {
+    db.exec(`
+      DROP INDEX IF EXISTS idx_airdrop_rounds_merkle_root;
+      DROP INDEX IF EXISTS idx_airdrop_rounds_contract_epoch;
+      DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_epoch;
+      DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_merkle_root;
+      DROP INDEX IF EXISTS idx_airdrop_rounds_deployment_contract_epoch;
+      DROP INDEX IF EXISTS idx_airdrop_claims_round_wallet;
+      DROP INDEX IF EXISTS idx_airdrop_claims_wallet_lookup;
+      DROP TABLE IF EXISTS airdrop_claims;
+      DROP TABLE IF EXISTS airdrop_rounds;
+    `);
+    createAirdropSchema(db);
+    return;
+  }
+
+  db.exec(`
+    ALTER TABLE airdrop_rounds RENAME TO airdrop_rounds_legacy_v1;
+    ALTER TABLE airdrop_claims RENAME TO airdrop_claims_legacy_v1;
+  `);
+  createAirdropSchema(db);
+
+  db.exec(`
+    INSERT INTO airdrop_rounds (
+      id,
+      deployment_key,
+      status,
+      epoch,
+      merkle_root,
+      deadline,
+      claim_count,
+      total_amount_raw,
+      decimals,
+      chain_id,
+      contract_address,
+      source_kind,
+      start_tx_hash,
+      start_block_number,
+      start_block_hash,
+      created_at,
+      updated_at
+    )
+    SELECT
+      id,
+      deployment_key,
+      'deployed',
+      epoch,
+      merkle_root,
+      deadline,
+      claim_count,
+      total_amount_raw,
+      decimals,
+      chain_id,
+      contract_address,
+      source_kind,
+      start_tx_hash,
+      start_block_number,
+      start_block_hash,
+      created_at,
+      updated_at
+    FROM airdrop_rounds_legacy_v1;
+
+    INSERT INTO airdrop_claims (
+      round_id,
+      claim_index,
+      wallet_address,
+      amount_raw,
+      proof_json,
+      claimed_at,
+      claimed_tx_hash,
+      created_at,
+      updated_at
+    )
+    SELECT
+      round_id,
+      claim_index,
+      wallet_address,
+      amount_raw,
+      proof_json,
+      NULL,
+      NULL,
+      created_at,
+      created_at
+    FROM airdrop_claims_legacy_v1;
+
+    DROP TABLE IF EXISTS airdrop_claims_legacy_v1;
+    DROP TABLE IF EXISTS airdrop_rounds_legacy_v1;
+  `);
 }
 
 function migrateSchema(db) {
   if (hasCurrentSchema(db)) {
-    setSchemaVersion(db, BASE_SCHEMA_VERSION);
+    setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
     return;
   }
 
-  resetToCurrentSchema(db);
+  const hasAccountTables = tableExists(db, "x_accounts") && tableExists(db, "recovery_submissions");
+  const hasAirdropTables = tableExists(db, "airdrop_rounds") && tableExists(db, "airdrop_claims");
+
+  if (!hasAccountTables && !hasAirdropTables) {
+    initializeSchema(db);
+    setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
+    return;
+  }
+
+  if (!hasAccountTables) {
+    resetToCurrentSchema(db);
+    return;
+  }
+
+  if (!hasAirdropTables) {
+    createAirdropSchema(db);
+    setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
+    return;
+  }
+
+  migrateAirdropSchemaV2(db);
+  setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
 }
 
 function openDatabase() {

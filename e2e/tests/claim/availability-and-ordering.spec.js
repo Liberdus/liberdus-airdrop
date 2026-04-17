@@ -25,6 +25,7 @@ test("claimant no longer sees a round after the owner disables it", async ({ pag
   await connectViaWalletPicker(page);
 
   await startAirdropFromUpload(page, e2eClaimsFile);
+  await page.getByRole("button", { name: "Contract", exact: true }).click();
   await page.locator("#updateEpochInput").fill("1");
   await page.getByRole("button", { name: "Disable Epoch" }).click();
   await expect(page.getByText("Disable epoch complete.")).toBeVisible();

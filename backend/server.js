@@ -34,7 +34,7 @@ const AUTH_INIT_COOKIE_NAME = "liberdus_x_oauth_init";
 const AUTH_SESSION_TTL_MS = 15 * 60 * 1000;
 const REQUEST_TOKEN_TTL_MS = 10 * 60 * 1000;
 const CHALLENGE_TTL_MS = 10 * 60 * 1000;
-const ADMIN_FINALIZE_CHALLENGE_TTL_MS = 10 * 60 * 1000;
+const ADMIN_ROUND_SAVE_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const MAX_JSON_BODY_BYTES = 32 * 1024;
 const RATE_LIMITS = {
   start: { limit: 12, windowMs: 10 * 60 * 1000 },
@@ -46,15 +46,17 @@ const RATE_LIMITS = {
   walletClaims: { limit: 120, windowMs: 60 * 1000 },
   rounds: { limit: 120, windowMs: 60 * 1000 },
   claimLookup: { limit: 120, windowMs: 60 * 1000 },
-  adminChallenge: { limit: 20, windowMs: 10 * 60 * 1000 },
-  finalizeRound: { limit: 20, windowMs: 10 * 60 * 1000 },
+  roundClaims: { limit: 120, windowMs: 60 * 1000 },
+  adminDraftChallenge: { limit: 20, windowMs: 10 * 60 * 1000 },
+  saveRound: { limit: 20, windowMs: 10 * 60 * 1000 },
+  deployRound: { limit: 20, windowMs: 10 * 60 * 1000 },
   health: { limit: 30, windowMs: 60 * 1000 },
 };
 
 const authSessions = new Map();
 const requestTokens = new Map();
 const linkChallenges = new Map();
-const adminFinalizeChallenges = new Map();
+const adminRoundSaveChallenges = new Map();
 const rateLimits = new Map();
 
 class HttpError extends Error {
@@ -539,9 +541,9 @@ function pruneExpiredState() {
     }
   }
 
-  for (const [challengeId, challenge] of adminFinalizeChallenges.entries()) {
+  for (const [challengeId, challenge] of adminRoundSaveChallenges.entries()) {
     if (challenge.expiresAtMs <= now) {
-      adminFinalizeChallenges.delete(challengeId);
+      adminRoundSaveChallenges.delete(challengeId);
     }
   }
 
@@ -676,10 +678,10 @@ function buildWalletLinkMessage({ profile, walletAddress, challengeId, issuedAt 
   ].join("\n");
 }
 
-function buildAdminFinalizeMessage({
+function buildAdminRoundSaveMessage({
   walletAddress,
-  txHash,
   merkleRoot,
+  deadline,
   challengeId,
   issuedAt,
   chainId,
@@ -687,18 +689,18 @@ function buildAdminFinalizeMessage({
   deploymentKey,
 }) {
   return [
-    "Liberdus admin airdrop finalize",
+    "Liberdus admin airdrop draft save",
     "",
     `Wallet: ${walletAddress}`,
     `Chain ID: ${chainId}`,
     `Contract: ${contractAddress}`,
     `Deployment key: ${deploymentKey}`,
-    `Transaction hash: ${txHash}`,
     `Merkle root: ${merkleRoot}`,
+    `Deadline: ${deadline}`,
     `Challenge: ${challengeId}`,
     `Issued at: ${issuedAt}`,
     "",
-    "Sign this message to authorize saving the finalized airdrop round to the backend.",
+    "Sign this message to authorize saving this airdrop draft to the backend.",
   ].join("\n");
 }
 
@@ -790,8 +792,10 @@ function serializeAirdropRoundSummary(round) {
   if (!round) return null;
 
   return {
+    id: Number(round.id || 0),
     deploymentKey: String(round.deploymentKey || "").trim(),
-    epoch: Number(round.epoch || 0),
+    status: String(round.status || "").trim(),
+    epoch: round.epoch == null ? null : Number(round.epoch),
     merkleRoot: String(round.merkleRoot || "").trim(),
     deadline: Number(round.deadline || 0),
     claimCount: Number(round.claimCount || 0),
@@ -808,19 +812,29 @@ function serializeAirdropRoundSummary(round) {
   };
 }
 
+function serializeAirdropClaimEntry(entry) {
+  if (!entry) return null;
+
+  return {
+    id: Number(entry.id || 0),
+    index: String(entry.index || ""),
+    account: String(entry.account || "").trim(),
+    amountRaw: String(entry.amountRaw || "0"),
+    proof: Array.isArray(entry.proof) ? [...entry.proof] : [],
+    usernameDisplay: String(entry.usernameDisplay || "").trim() || null,
+    claimedAt: entry.claimedAt || null,
+    claimedTxHash: String(entry.claimedTxHash || "").trim() || null,
+    createdAt: entry.createdAt || null,
+    updatedAt: entry.updatedAt || null,
+  };
+}
+
 function serializeAirdropWalletRound(round) {
   if (!round) return null;
 
   return {
     ...serializeAirdropRoundSummary(round),
-    entry: round.entry
-      ? {
-        index: String(round.entry.index || ""),
-        account: String(round.entry.account || "").trim(),
-        amountRaw: String(round.entry.amountRaw || "0"),
-        proof: Array.isArray(round.entry.proof) ? [...round.entry.proof] : [],
-      }
-      : null,
+    entry: serializeAirdropClaimEntry(round.entry),
   };
 }
 
@@ -849,16 +863,16 @@ function getRequiredDeploymentKey() {
   return deploymentKey;
 }
 
-function getRequiredAdminChallenge(body) {
+function getRequiredAdminRoundSaveChallenge(body) {
   const challengeId = String(body?.challengeId || "").trim();
   if (!challengeId) {
-    throw new HttpError(400, "Admin finalize request must include challengeId.");
+    throw new HttpError(400, "Admin round save request must include challengeId.");
   }
 
   pruneExpiredState();
-  const challenge = adminFinalizeChallenges.get(challengeId);
+  const challenge = adminRoundSaveChallenges.get(challengeId);
   if (!challenge) {
-    throw new HttpError(400, "Admin finalize challenge expired. Start again.");
+    throw new HttpError(400, "Admin round save challenge expired. Start again.");
   }
 
   return challenge;
@@ -1112,6 +1126,15 @@ async function handleRoundsLookup(response) {
   });
 }
 
+function serializeAirdropClaimRecord(record) {
+  if (!record) return null;
+
+  return {
+    round: serializeAirdropRoundSummary(record.round),
+    entry: serializeAirdropClaimEntry(record.entry),
+  };
+}
+
 async function handleClaimByEpochAndIndexLookup(response, epoch, claimIndex) {
   const normalizedEpoch = Number.parseInt(String(epoch || "").trim(), 10);
   const normalizedClaimIndex = Number.parseInt(String(claimIndex || "").trim(), 10);
@@ -1135,29 +1158,67 @@ async function handleClaimByEpochAndIndexLookup(response, epoch, claimIndex) {
 
   writeJson(response, 200, {
     round: serializeAirdropRoundSummary(claim),
-    entry: serializeAirdropWalletRound(claim).entry,
+    entry: serializeAirdropClaimEntry(claim.entry),
   });
 }
 
-async function handleAdminFinalizeChallenge(request, response) {
+async function handleRoundClaimsLookup(response, roundId) {
+  const normalizedRoundId = Number.parseInt(String(roundId || "").trim(), 10);
+  if (!Number.isInteger(normalizedRoundId) || normalizedRoundId <= 0) {
+    throw new HttpError(400, "Round ID must be a positive integer.");
+  }
+
+  const claims = airdropRoundStore.listClaimsByRound(normalizedRoundId, getRequiredDeploymentKey());
+  writeJson(response, 200, {
+    claims: claims.map((record) => serializeAirdropClaimRecord(record)),
+  });
+}
+
+async function handleClaimByIdLookup(response, claimId) {
+  const normalizedClaimId = Number.parseInt(String(claimId || "").trim(), 10);
+  if (!Number.isInteger(normalizedClaimId) || normalizedClaimId <= 0) {
+    throw new HttpError(400, "Claim ID must be a positive integer.");
+  }
+
+  const claim = airdropRoundStore.getClaimById(normalizedClaimId, getRequiredDeploymentKey());
+  if (!claim) {
+    throw new HttpError(404, "Claim was not found.");
+  }
+
+  writeJson(response, 200, serializeAirdropClaimRecord(claim));
+}
+
+async function handleClaimWalletLookup(response, walletAddress) {
+  const normalizedWalletAddress = requireWalletAddress(walletAddress);
+  const claims = airdropRoundStore.findClaimsByWallet(normalizedWalletAddress, getRequiredDeploymentKey());
+  writeJson(response, 200, {
+    walletAddress: normalizedWalletAddress,
+    claims: claims.map((record) => serializeAirdropClaimRecord(record)),
+  });
+}
+
+async function handleAdminDraftChallenge(request, response) {
   const body = await readJsonRequest(request);
   const walletAddress = requireWalletAddress(body.walletAddress);
-  const txHash = requireBytes32Hex(body.txHash, "Transaction hash");
   const merkleRoot = requireBytes32Hex(body.merkleRoot, "Merkle root");
+  const deadline = Number.parseInt(String(body.deadline || "").trim(), 10);
+  if (!Number.isInteger(deadline) || deadline <= 0) {
+    throw new HttpError(400, "Deadline must be a positive integer.");
+  }
   const chainConfig = requireChainConfig(appConfig);
   const currentOwner = await fetchAirdropOwner(chainConfig);
 
   if (ethers.getAddress(currentOwner) !== walletAddress) {
-    throw new HttpError(403, "Only the current contract owner can save finalized rounds.");
+    throw new HttpError(403, "Only the current contract owner can save airdrop drafts.");
   }
 
   const challengeId = createRandomToken(18);
   const issuedAt = new Date().toISOString();
   const deploymentKey = getRequiredDeploymentKey();
-  const message = buildAdminFinalizeMessage({
+  const message = buildAdminRoundSaveMessage({
     walletAddress,
-    txHash,
     merkleRoot,
+    deadline,
     challengeId,
     issuedAt,
     chainId: chainConfig.chainId,
@@ -1165,109 +1226,153 @@ async function handleAdminFinalizeChallenge(request, response) {
     deploymentKey,
   });
 
-  adminFinalizeChallenges.set(challengeId, {
+  adminRoundSaveChallenges.set(challengeId, {
     challengeId,
     walletAddress,
-    txHash,
     merkleRoot,
+    deadline,
     deploymentKey,
     message,
     issuedAt,
-    expiresAtMs: Date.now() + ADMIN_FINALIZE_CHALLENGE_TTL_MS,
+    expiresAtMs: Date.now() + ADMIN_ROUND_SAVE_CHALLENGE_TTL_MS,
   });
 
   writeJson(response, 200, {
     challengeId,
     message,
-    expiresAt: Date.now() + ADMIN_FINALIZE_CHALLENGE_TTL_MS,
+    expiresAt: Date.now() + ADMIN_ROUND_SAVE_CHALLENGE_TTL_MS,
     walletAddress,
   });
 }
 
-async function handleFinalizeAirdropRound(request, response) {
+async function handleSaveAirdropRound(request, response) {
   const body = await readJsonRequest(request);
   const rawClaims = Array.isArray(body.claims)
     ? body.claims
     : Array.isArray(body.round?.claims)
       ? body.round.claims
       : null;
-  const txHash = String(body.txHash || body.transactionHash || "").trim();
+  const deadline = Number.parseInt(String(body.deadline || body.round?.deadline || "").trim(), 10);
   const decimals = Number.parseInt(String(body.decimals || body.round?.decimals || appConfig.tokenDecimals || "18").trim(), 10);
 
   if (!rawClaims?.length) {
     throw new HttpError(400, "Claims payload is required.");
   }
 
+  if (!Number.isInteger(deadline) || deadline <= 0) {
+    throw new HttpError(400, "Round deadline must be a positive integer.");
+  }
+
   if (!Number.isInteger(decimals) || decimals < 0) {
     throw new HttpError(400, "Token decimals must be a non-negative integer.");
   }
 
-  const challenge = getRequiredAdminChallenge(body);
+  const challenge = getRequiredAdminRoundSaveChallenge(body);
   const signedWalletAddress = requireWalletAddress(body.walletAddress);
   const signature = String(body.signature || "").trim();
-  const expectedTxHash = requireBytes32Hex(txHash, "Transaction hash");
   if (!signature) {
-    throw new HttpError(400, "Admin finalize request must include a wallet signature.");
+    throw new HttpError(400, "Admin round save request must include a wallet signature.");
   }
 
   const builtRound = buildClaimRound(rawClaims, decimals);
   const expectedMerkleRoot = String(builtRound.root || "").trim().toLowerCase();
 
   if (challenge.walletAddress !== signedWalletAddress) {
-    throw new HttpError(403, "Admin finalize challenge does not match the signing wallet.");
-  }
-
-  if (challenge.txHash !== expectedTxHash) {
-    throw new HttpError(400, "Admin finalize challenge does not match the transaction hash.");
+    throw new HttpError(403, "Admin round save challenge does not match the signing wallet.");
   }
 
   if (challenge.merkleRoot !== expectedMerkleRoot) {
-    throw new HttpError(400, "Admin finalize challenge does not match the Merkle root.");
+    throw new HttpError(400, "Admin round save challenge does not match the Merkle root.");
+  }
+
+  if (challenge.deadline !== deadline) {
+    throw new HttpError(400, "Admin round save challenge does not match the deadline.");
   }
 
   if (challenge.deploymentKey !== getRequiredDeploymentKey()) {
-    throw new HttpError(400, "Admin finalize challenge does not match the active deployment.");
+    throw new HttpError(400, "Admin round save challenge does not match the active deployment.");
   }
 
   let recoveredAddress;
   try {
     recoveredAddress = ethers.verifyMessage(challenge.message, signature);
   } catch {
-    throw new HttpError(400, "Admin finalize signature is invalid.");
+    throw new HttpError(400, "Admin round save signature is invalid.");
   }
 
   if (ethers.getAddress(recoveredAddress) !== signedWalletAddress) {
-    throw new HttpError(403, "Admin finalize signature did not match the supplied wallet.");
+    throw new HttpError(403, "Admin round save signature did not match the supplied wallet.");
   }
 
   const chainConfig = requireChainConfig(appConfig);
   const currentOwner = await fetchAirdropOwner(chainConfig);
   if (ethers.getAddress(currentOwner) !== signedWalletAddress) {
-    throw new HttpError(403, "Only the current contract owner can save finalized rounds.");
+    throw new HttpError(403, "Only the current contract owner can save airdrop drafts.");
   }
 
-  const verifiedRound = await verifyAirdropStartTransaction(chainConfig, txHash, builtRound.root);
-  adminFinalizeChallenges.delete(challenge.challengeId);
-  const savedRound = airdropRoundStore.upsertRound({
+  adminRoundSaveChallenges.delete(challenge.challengeId);
+  const savedRound = airdropRoundStore.saveDraftRound({
     deploymentKey: getRequiredDeploymentKey(),
-    epoch: verifiedRound.epoch,
-    merkleRoot: verifiedRound.merkleRoot,
-    deadline: verifiedRound.deadline,
+    merkleRoot: expectedMerkleRoot,
+    deadline,
     claimCount: builtRound.claimCount,
     totalAmountRaw: builtRound.totalAmountRaw,
     decimals: builtRound.decimals,
     chainId: chainConfig.chainId,
     contractAddress: chainConfig.airdropAddress,
-    sourceKind: "admin-finalized",
-    startTxHash: verifiedRound.txHash,
-    startBlockNumber: verifiedRound.blockNumber,
-    startBlockHash: verifiedRound.blockHash,
+    sourceKind: "admin-draft",
     claims: builtRound.claims,
     updatedAt: new Date().toISOString(),
   });
 
   writeJson(response, 200, {
     round: serializeAirdropRoundSummary(savedRound),
+  });
+}
+
+async function handleDeployStoredAirdropRound(request, response, roundId) {
+  const body = await readJsonRequest(request);
+  const txHash = requireBytes32Hex(body.txHash || body.transactionHash, "Transaction hash");
+  const deploymentKey = getRequiredDeploymentKey();
+  const storedRound = airdropRoundStore.getRoundById(roundId, deploymentKey);
+
+  if (!storedRound) {
+    throw new HttpError(404, "Stored airdrop round was not found.");
+  }
+
+  if (storedRound.status === "deployed") {
+    if (storedRound.startTxHash && storedRound.startTxHash !== txHash) {
+      throw new HttpError(409, "This round was already deployed with a different transaction hash.");
+    }
+
+    writeJson(response, 200, {
+      round: serializeAirdropRoundSummary(storedRound),
+    });
+    return;
+  }
+
+  const chainConfig = requireChainConfig(appConfig);
+  const verifiedRound = await verifyAirdropStartTransaction(chainConfig, txHash, storedRound.merkleRoot);
+
+  if (verifiedRound.deadline !== storedRound.deadline) {
+    throw new HttpError(400, "The deployed round deadline did not match the saved draft.");
+  }
+
+  const deployedRound = airdropRoundStore.finalizeRoundDeployment(roundId, deploymentKey, {
+    epoch: verifiedRound.epoch,
+    merkleRoot: verifiedRound.merkleRoot,
+    deadline: verifiedRound.deadline,
+    chainId: chainConfig.chainId,
+    contractAddress: chainConfig.airdropAddress,
+    sourceKind: "admin-draft",
+    startTxHash: verifiedRound.txHash,
+    startBlockNumber: verifiedRound.blockNumber,
+    startBlockHash: verifiedRound.blockHash,
+    updatedAt: new Date().toISOString(),
+  });
+
+  writeJson(response, 200, {
+    round: serializeAirdropRoundSummary(deployedRound),
   });
 }
 
@@ -1503,6 +1608,14 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    const roundClaimsMatch = pathname.match(/^\/api\/airdrop\/rounds\/(\d+)\/claims$/u);
+    if (request.method === "GET" && roundClaimsMatch) {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "roundClaims");
+      await handleRoundClaimsLookup(response, roundClaimsMatch[1]);
+      return;
+    }
+
     const claimLookupMatch = pathname.match(/^\/api\/airdrop\/epochs\/(\d+)\/claims\/(\d+)$/u);
     if (request.method === "GET" && claimLookupMatch) {
       requireAllowedOrigin(request, response);
@@ -1511,17 +1624,40 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === "POST" && pathname === "/api/admin/airdrop-rounds/challenge") {
+    const claimByIdMatch = pathname.match(/^\/api\/airdrop\/claims\/(\d+)$/u);
+    if (request.method === "GET" && claimByIdMatch) {
       requireAllowedOrigin(request, response);
-      consumeRateLimit(request, "adminChallenge");
-      await handleAdminFinalizeChallenge(request, response);
+      consumeRateLimit(request, "claimLookup");
+      await handleClaimByIdLookup(response, claimByIdMatch[1]);
       return;
     }
 
-    if (request.method === "POST" && pathname === "/api/admin/airdrop-rounds/finalize") {
+    if (request.method === "GET" && pathname === "/api/airdrop/claims") {
       requireAllowedOrigin(request, response);
-      consumeRateLimit(request, "finalizeRound");
-      await handleFinalizeAirdropRound(request, response);
+      consumeRateLimit(request, "claimLookup");
+      await handleClaimWalletLookup(response, requestUrl.searchParams.get("walletAddress"));
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/airdrop-rounds/save-challenge") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminDraftChallenge");
+      await handleAdminDraftChallenge(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/airdrop-rounds/save") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "saveRound");
+      await handleSaveAirdropRound(request, response);
+      return;
+    }
+
+    const deployRoundMatch = pathname.match(/^\/api\/admin\/airdrop-rounds\/(\d+)\/deploy$/u);
+    if (request.method === "POST" && deployRoundMatch) {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "deployRound");
+      await handleDeployStoredAirdropRound(request, response, deployRoundMatch[1]);
       return;
     }
 

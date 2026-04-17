@@ -1,17 +1,10 @@
 const { expect, test, toHexChainId } = require("../../fixtures/testWithMockWallet");
-const { connectViaWalletPicker, setFutureDeadline } = require("../helpers");
+const { connectViaWalletPicker, startAirdropFromUpload } = require("../helpers");
 
 test("@smoke claimant can claim from the wrong network after wallet switch", async ({ page, e2eClaimsFile, mockWallet }) => {
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
-
-  await page.locator("#uploadClaimsFileInput").setInputFiles(e2eClaimsFile);
-  await expect(page.getByText("Claims file loaded.")).toBeVisible();
-  await setFutureDeadline(page, "#startDeadlineInput");
-  await page.getByRole("button", { name: "Fund Contract" }).click();
-  await expect(page.getByText("Fund airdrop complete.")).toBeVisible();
-  await page.getByRole("button", { name: "Start New Airdrop" }).click();
-  await expect(page.locator("#currentEpoch")).toHaveText("1");
+  await startAirdropFromUpload(page, e2eClaimsFile);
 
   await mockWallet.setAccount(page, mockWallet.accounts.claimant);
   await mockWallet.setChainId(page, toHexChainId(31337));
@@ -37,13 +30,7 @@ test("@smoke claimant can claim from the wrong network after wallet switch", asy
 test("claimant outsider sees the generic empty state", async ({ page, e2eClaimsFile, mockWallet }) => {
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
-
-  await page.locator("#uploadClaimsFileInput").setInputFiles(e2eClaimsFile);
-  await setFutureDeadline(page, "#startDeadlineInput");
-  await page.getByRole("button", { name: "Fund Contract" }).click();
-  await expect(page.getByText("Fund airdrop complete.")).toBeVisible();
-  await page.getByRole("button", { name: "Start New Airdrop" }).click();
-  await expect(page.locator("#currentEpoch")).toHaveText("1");
+  await startAirdropFromUpload(page, e2eClaimsFile);
 
   await mockWallet.setAccount(page, mockWallet.accounts.outsider);
   await page.goto("index.html");
