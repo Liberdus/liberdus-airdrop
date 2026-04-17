@@ -9,6 +9,8 @@ export function toChainIdHex(chainId) {
 
 export const STORAGE_KEY = "liberdus-airdrop-ui-config";
 export const WALLET_SESSION_KEY = "liberdus-airdrop-wallet-session";
+export const X_AUTH_PENDING_KEY = "liberdus-airdrop-x-auth-pending";
+export const X_AUTH_SESSION_KEY = "liberdus-airdrop-x-auth-session";
 export const UI_ROOT = new URL("../../", import.meta.url);
 export const CHAIN_NAME_BY_ID = {
   1: "Ethereum",

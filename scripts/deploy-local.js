@@ -1,6 +1,28 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const hre = require("hardhat");
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergeConfig(baseValue, nextValue) {
+  if (!isPlainObject(baseValue) || !isPlainObject(nextValue)) {
+    return nextValue;
+  }
+
+  const merged = { ...baseValue };
+  for (const [key, value] of Object.entries(nextValue)) {
+    merged[key] = key in merged ? mergeConfig(merged[key], value) : value;
+  }
+  return merged;
+}
+
+function loadJsonIfExists(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
 
 async function main() {
   const { ethers } = hre;
@@ -32,19 +54,27 @@ async function main() {
     tokenAddress: await token.getAddress(),
     dustTokenAddress: await dustToken.getAddress(),
     airdropAddress: await airdrop.getAddress(),
+    deploymentKey: `local:${crypto.randomUUID()}`,
     generatedAt: new Date().toISOString(),
   };
 
   const frontendDir = path.join(__dirname, "..", "frontend");
+  const configLocalPath = path.join(frontendDir, "config.local.json");
+  const configLocalTemplatePath = path.join(frontendDir, "config.local.template.json");
+  const existingConfig = loadJsonIfExists(configLocalPath)
+    || loadJsonIfExists(configLocalTemplatePath)
+    || {};
   fs.mkdirSync(frontendDir, { recursive: true });
-  fs.writeFileSync(path.join(frontendDir, "config.local.json"), `${JSON.stringify(config, null, 2)}\n`);
+  const mergedConfig = mergeConfig(existingConfig, config);
+  fs.writeFileSync(configLocalPath, `${JSON.stringify(mergedConfig, null, 2)}\n`);
 
   console.log("Local deployment complete.");
   console.log(`Deployer:    ${config.deployer}`);
   console.log(`Token:       ${config.tokenAddress}`);
   console.log(`Dust token:  ${config.dustTokenAddress}`);
   console.log(`Airdrop:     ${config.airdropAddress}`);
-  console.log(`Frontend config: ${path.join(frontendDir, "config.local.json")}`);
+  console.log(`Deployment key: ${config.deploymentKey}`);
+  console.log(`Frontend config: ${configLocalPath}`);
 }
 
 main().catch((error) => {

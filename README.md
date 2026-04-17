@@ -68,6 +68,8 @@ npm run verify:airdrop:bsc:mainnet
 
 The frontend lives in `frontend/` and is served without any frontend framework or build step.
 
+For server deployment, PM2, and SQLite account import instructions, see [SERVER_DEPLOYMENT.md](</C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/SERVER_DEPLOYMENT.md>).
+
 ```bash
 npm run node
 npm run deploy:local
@@ -75,6 +77,7 @@ npm run fund:owner:local
 ```
 
 `npm run deploy:local` writes `frontend/config.local.json` with the current local deployment addresses used by the frontend.
+It also writes a fresh `deploymentKey` each time so local Hardhat resets and redeploys do not collide with older airdrop rounds stored in SQLite.
 
 For hosted deployments, the frontend reads `frontend/config.json`. Publish the right config file before deploying:
 
@@ -90,7 +93,150 @@ Serve the repo with any static file server, then open:
 - `/frontend/index.html` for the claimant page
 - `/frontend/admin.html` for the owner-only admin page
 
-Hosted claim rounds are listed in `frontend/claims/index.json`. Each entry points at the raw claims JSON for one epoch. The claimant page loads those raw files, computes the Merkle tree in the browser, and generates proofs client-side.
+Claim rounds now live in the backend SQLite database. The claim page reads wallet-specific proofs from the backend, and the admin page saves newly started rounds into that database after the `startNewAirdrop` transaction confirms on chain.
+
+The claimant page also supports X sign-in through the `xAuth` block in each frontend config file:
+
+```json
+{
+  "apiBaseUrl": "https://your-backend.example",
+  "xAuth": {
+    "enabled": true,
+    "redirectUri": "https://your-site.example/frontend/index.html",
+    "backendUrl": "https://your-auth-server.example"
+  }
+}
+```
+
+This repo now uses X OAuth 1.0a for the recovery flow. The frontend `redirectUri` is the page users should return to after the backend finishes the X callback. The actual callback registered in the X app settings must point at your backend callback endpoint, not the frontend page.
+
+On the claim page, the X recovery flow is shown only when:
+
+- a wallet is connected
+- that wallet has no claim entries across the loaded rounds
+
+After the user signs in with X, the page requests a wallet signature and submits the signed wallet/X pairing to the backend for storage.
+
+For local development:
+
+```bash
+npm run xauth:local
+```
+
+The local backend now lives under `backend/`.
+
+The local auth server reads these environment variables from `.env`:
+
+```dotenv
+X_API_KEY=
+X_API_SECRET=
+X_OAUTH1_CALLBACK_URL=http://127.0.0.1:8787/api/x/callback
+X_FRONTEND_RETURN_URL=http://127.0.0.1:5502/frontend/
+X_FRONTEND_RETURN_URLS=http://127.0.0.1:5502/frontend/
+X_AUTH_ALLOWED_ORIGINS=http://127.0.0.1:5502
+X_AUTH_COOKIE_SECURE=auto
+X_AUTH_TRUST_PROXY=false
+LIBERDUS_DB_PATH=data/liberdus.sqlite
+LIBERDUS_CHAIN_ID=1337
+LIBERDUS_RPC_URL=http://127.0.0.1:8545
+LIBERDUS_AIRDROP_ADDRESS=
+LIBERDUS_DEPLOYMENT_KEY=
+LIBERDUS_CLAIMS_MANIFEST=frontend/claims/generated/index.json
+LIBERDUS_TOKEN_DECIMALS=18
+X_FOLLOWER_SNAPSHOT_FILE=cache/x/liberdus-followers.json
+X_RECOVERY_CANDIDATES_FILE=cache/x/missing-address-usernames.json
+# Legacy import source for pre-SQLite recovery submissions.
+X_RECOVERY_STORE_FILE=cache/x/recovery-links.json
+```
+
+Then set local frontend config like:
+
+```json
+{
+  "apiBaseUrl": "http://127.0.0.1:8787",
+  "deploymentKey": "local:your-current-deploy-id",
+  "xAuth": {
+    "enabled": true,
+    "redirectUri": "http://127.0.0.1:5502/frontend/",
+    "backendUrl": "http://127.0.0.1:8787"
+  }
+}
+```
+
+For production, set `X_AUTH_COOKIE_SECURE=true` behind HTTPS and configure `X_AUTH_TRUST_PROXY=true` only if the server is behind a trusted reverse proxy that sets `X-Forwarded-For`.
+
+Follower matching now reads from SQLite, not directly from the raw follower export JSON. Import the latest snapshot into the DB before running the auth server:
+
+```bash
+npm run followers:import
+```
+
+That command reads `X_FOLLOWER_SNAPSHOT_FILE`, upserts the latest follower state into `x_accounts`, and updates per-account snapshot rollups in `LIBERDUS_DB_PATH` so you can track how many snapshots an account has appeared in and when it was first or last seen.
+
+Recovery-candidate matching also reads from SQLite. Import the latest processed candidate list before running the auth server:
+
+```bash
+npm run recovery-candidates:import -- --file "C:\path\to\api_followers_not_seen_in_airdrop_rewards_....csv"
+```
+
+That command reads `X_RECOVERY_CANDIDATES_FILE` by default, supports both the processed CSV format and the legacy JSON username list, and marks the latest recovery-candidate set on `x_accounts` in `LIBERDUS_DB_PATH`.
+
+If you want to pull old JSON submissions into SQLite once, run:
+
+```bash
+npm run recovery-submissions:import
+```
+
+That command reads `X_RECOVERY_STORE_FILE` as a legacy import source and writes those rows into `recovery_submissions`.
+
+To seed the DB with the existing file-backed claim rounds once, run:
+
+```bash
+npm run claim-rounds:import
+```
+
+That command reads `LIBERDUS_CLAIMS_MANIFEST`, rebuilds each round server-side, and stores finalized proofs in `airdrop_rounds` / `airdrop_claims`. If the imported root matches the live on-chain epoch, the importer also stores the current deadline from chain.
+
+Round identity is now namespaced by `deploymentKey`. The backend stores rounds under `(deploymentKey, epoch)`, so:
+
+- production/test deployments can keep a stable key, such as `chainId:contractAddress`
+- local deployments should use a fresh key every time `npm run deploy:local` runs
+- old rounds and claims can stay in SQLite for history, but they will not leak into the current deployment once the key changes
+
+The local auth server:
+
+- starts the OAuth 1.0a request-token flow server-side
+- receives the X callback at `X_OAUTH1_CALLBACK_URL`
+- exchanges the request token for an access token and token secret
+- uses the username returned by X when available, and falls back to `account/verify_credentials` only if needed
+- keeps a short-lived X session in memory using an HttpOnly cookie
+- allows only exact frontend return URLs listed in `X_FRONTEND_RETURN_URLS`
+- binds the login handoff to the initiating browser before accepting the X callback
+- requires allowed browser origins plus a CSRF token on state-changing requests
+- rate limits the auth, challenge, and save endpoints
+- issues a wallet-signature challenge tied to the signed-in X account
+- verifies the wallet signature on the backend
+- reads follower matches from the `x_accounts` table in `LIBERDUS_DB_PATH`
+- reads recovery-candidate flags from the `x_accounts` table in `LIBERDUS_DB_PATH`
+- stores recovery proof submissions in the `recovery_submissions` table in `LIBERDUS_DB_PATH`
+- stores finalized airdrop rounds in `airdrop_rounds` / `airdrop_claims` in `LIBERDUS_DB_PATH`
+- flags whether the username matched:
+  - the imported follower snapshot data in `LIBERDUS_DB_PATH`
+  - the latest imported recovery-candidate set in `LIBERDUS_DB_PATH`
+
+`X_RECOVERY_CANDIDATES_FILE` is optional. If present, it can be either:
+
+```json
+["alice", "bob", "charlie"]
+```
+
+or:
+
+```json
+{
+  "usernames": ["alice", "bob", "charlie"]
+}
+```
 
 ## Merkle CLI
 

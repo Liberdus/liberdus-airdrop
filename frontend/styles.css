@@ -683,6 +683,91 @@ select {
   margin-top: 18px;
 }
 
+.x-auth-card {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid rgba(251, 175, 64, 0.16);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 38%),
+    linear-gradient(180deg, rgba(13, 30, 82, 0.92), rgba(6, 17, 52, 0.96));
+}
+
+.x-auth-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.x-auth-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.x-auth-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.x-auth-avatar {
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  min-height: 52px;
+  border-radius: 50%;
+  border: 1px solid rgba(251, 175, 64, 0.2);
+  object-fit: cover;
+  background: rgba(251, 175, 64, 0.08);
+}
+
+.x-auth-profile {
+  min-width: 0;
+  display: grid;
+  gap: 0;
+}
+
+.x-auth-status {
+  margin: 0;
+}
+
+.x-auth-link,
+.x-auth-status {
+  font-family: var(--mono);
+}
+
+.x-auth-link {
+  color: var(--accent-strong);
+  font-size: 1rem;
+  line-height: 1.2;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
+.x-auth-status {
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.x-auth-status[data-tone="success"] {
+  color: var(--success);
+}
+
+.x-auth-status[data-tone="warn"] {
+  color: var(--accent-strong);
+}
+
+.x-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.x-auth-actions button {
+  min-width: 176px;
+}
+
 .claim-title {
   max-width: none;
   font-size: clamp(2.1rem, 8vw, 3.1rem);
@@ -1630,6 +1715,7 @@ code {
     align-items: stretch;
   }
 
+  .x-auth-identity,
   .claim-topbar {
     flex-direction: column;
     align-items: stretch;
@@ -1709,6 +1795,10 @@ code {
   }
 
   .claim-lookup-actions button {
+    width: 100%;
+  }
+
+  .x-auth-actions button {
     width: 100%;
   }
 

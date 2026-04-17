@@ -21,7 +21,17 @@ import {
   getAvailableWallets,
 } from "../shared/wallet.js";
 import { promptForWalletSelection } from "../shared/wallet-picker.js";
-import { loadClaimCatalog, fetchClaimSource, findClaimEntry, isMissingClaimSourceError } from "../shared/claims.js";
+import { fetchWalletClaimRounds, isClaimsApiConfigured } from "../shared/claims.js";
+import {
+  getXSession,
+  clearXSession,
+  saveXSession,
+  isXAuthConfigured,
+  isXSessionExpired,
+  startXLogin,
+  logoutXSession,
+  completeXLoginIfPresent,
+} from "../shared/x-auth.js";
 
 const runtime = {
   provider: null,
@@ -38,13 +48,30 @@ const runtime = {
   selectedWalletRdns: null,
   owner: null,
   currentEpoch: 0,
-  config: { chainId: null, networkName: "", rpcUrl: "", nativeCurrency: null, tokenAddress: "", dustTokenAddress: "", airdropAddress: "", claimsManifestPath: "./claims/index.json" },
+  config: {
+    chainId: null,
+    networkName: "",
+    rpcUrl: "",
+    nativeCurrency: null,
+    tokenAddress: "",
+    dustTokenAddress: "",
+    airdropAddress: "",
+    apiBaseUrl: "",
+    claimsManifestPath: "./claims/index.json",
+    xAuth: {
+      enabled: true,
+      redirectUri: "",
+      backendUrl: "",
+    },
+  },
   configSource: "template",
   tokenDecimals: 18,
   tokenSymbol: "LIB",
-  claimCatalog: null,
   rounds: [],
   isConnectingWallet: false,
+  isConnectingX: false,
+  isSubmittingXWalletLink: false,
+  xSession: null,
   noticeTimerId: null,
 };
 
@@ -64,6 +91,16 @@ const els = {
   claimToastMessage: document.getElementById("claimToastMessage"),
   claimToastClose: document.getElementById("claimToastClose"),
   switchNetworkButton: document.getElementById("switchNetworkButton"),
+  xAuthCard: document.getElementById("xAuthCard"),
+  xAuthHint: document.getElementById("xAuthHint"),
+  xAuthIdentity: document.getElementById("xAuthIdentity"),
+  xAuthAvatar: document.getElementById("xAuthAvatar"),
+  xAuthProfileLink: document.getElementById("xAuthProfileLink"),
+  xAuthStatus: document.getElementById("xAuthStatus"),
+  xAuthLinkStatus: document.getElementById("xAuthLinkStatus"),
+  xAuthButton: document.getElementById("xAuthButton"),
+  xVerifyButton: document.getElementById("xVerifyButton"),
+  xDisconnectButton: document.getElementById("xDisconnectButton"),
 };
 
 const toast = createToastController({
@@ -127,6 +164,191 @@ function isReadyChain() {
   return runtime.chainId === runtime.config.chainId;
 }
 
+function hasAnyOnchainClaimEntry() {
+  return runtime.rounds.some((round) => {
+    if (!round.entry) return false;
+    return !["not-live", "mismatch", "error"].includes(round.status);
+  });
+}
+
+function shouldOfferXRecovery() {
+  if (!runtime.account) return false;
+  if (!isClaimsApiConfigured(runtime.config)) return false;
+  return !hasAnyOnchainClaimEntry();
+}
+
+function formatXLinkStatus(linkResult) {
+  if (!linkResult) {
+    return "";
+  }
+
+  return "Thanks. We received your wallet and X account and will review it.";
+}
+
+function getSignedInXAccount() {
+  return runtime.xSession?.account || null;
+}
+
+function getExistingXSubmission() {
+  return runtime.xSession?.existingSubmission || null;
+}
+
+function hasWalletOnFileForXAccount(account = getSignedInXAccount()) {
+  return Boolean(String(account?.walletAddress || "").trim());
+}
+
+function formatExistingFormWalletStatus(account = getSignedInXAccount()) {
+  const walletAddress = String(account?.walletAddress || "").trim();
+  if (!walletAddress) {
+    return "We already have a wallet on file for this X account.";
+  }
+
+  const isConnectedWalletMatch = Boolean(
+    runtime.account
+    && normalizeAddress(walletAddress) === normalizeAddress(runtime.account),
+  );
+
+  if (isConnectedWalletMatch) {
+    return `We already have this X account linked to ${walletAddress}. Use this wallet to claim when eligible rounds are available.`;
+  }
+
+  return `We already have this X account linked to ${walletAddress}. Switch to that wallet to claim.`;
+}
+
+function formatExistingRecoveryStatus() {
+  return "We already received a response for this X account.";
+}
+
+function syncXSessionFromStorage() {
+  const session = getXSession();
+  if (session && isXSessionExpired(session)) {
+    clearXSession();
+    runtime.xSession = null;
+    return false;
+  }
+
+  runtime.xSession = session;
+  return Boolean(session);
+}
+
+function syncXAuthCard() {
+  if (!els.xAuthCard) return;
+
+  const xAuthEnabled = runtime.config?.xAuth?.enabled !== false && shouldOfferXRecovery();
+  els.xAuthCard.hidden = !xAuthEnabled;
+  if (!xAuthEnabled) return;
+
+  const isConfigured = isXAuthConfigured(runtime.config);
+  const profile = runtime.xSession?.profile || null;
+  const account = getSignedInXAccount();
+  const existingSubmission = getExistingXSubmission();
+  const isSignedIn = Boolean(profile?.username);
+  const hasWalletOnFile = hasWalletOnFileForXAccount(account);
+  const hasSavedFormWallet = hasWalletOnFile && account?.walletSource === "form";
+  const hasSavedRecoveryWallet = Boolean(existingSubmission) || (hasWalletOnFile && account?.walletSource !== "form");
+
+  els.xAuthIdentity.hidden = !isSignedIn;
+  els.xDisconnectButton.hidden = !isSignedIn;
+  els.xAuthButton.hidden = isSignedIn;
+  els.xVerifyButton.hidden = !isSignedIn || hasWalletOnFile || Boolean(existingSubmission);
+  els.xAuthStatus.hidden = false;
+
+  if (isSignedIn) {
+    els.xAuthProfileLink.textContent = `@${profile.username}`;
+    els.xAuthProfileLink.href = `https://x.com/${encodeURIComponent(profile.username)}`;
+    els.xAuthProfileLink.hidden = false;
+    els.xAuthHint.hidden = true;
+    els.xAuthStatus.textContent = "Signed in on x.com.";
+    els.xAuthStatus.dataset.tone = "";
+
+    if (profile.profileImageUrl) {
+      els.xAuthAvatar.src = profile.profileImageUrl;
+      els.xAuthAvatar.alt = `${profile.username} avatar`;
+      els.xAuthAvatar.hidden = false;
+    } else {
+      els.xAuthAvatar.hidden = true;
+      els.xAuthAvatar.removeAttribute("src");
+      els.xAuthAvatar.alt = "";
+    }
+
+    if (hasSavedFormWallet) {
+      els.xAuthHint.hidden = true;
+      els.xAuthStatus.hidden = true;
+      els.xVerifyButton.hidden = true;
+      els.xVerifyButton.disabled = true;
+      els.xAuthLinkStatus.hidden = false;
+      els.xAuthLinkStatus.textContent = formatExistingFormWalletStatus(account);
+      return;
+    }
+
+    if (hasSavedRecoveryWallet) {
+      els.xAuthHint.hidden = true;
+      els.xAuthStatus.hidden = true;
+      els.xVerifyButton.hidden = true;
+      els.xVerifyButton.disabled = true;
+      els.xAuthLinkStatus.hidden = false;
+      els.xAuthLinkStatus.textContent = formatExistingRecoveryStatus();
+      return;
+    }
+
+    if (runtime.isSubmittingXWalletLink) {
+      els.xVerifyButton.textContent = "Verifying...";
+      els.xVerifyButton.disabled = true;
+      els.xAuthLinkStatus.hidden = false;
+      els.xAuthLinkStatus.textContent = "Confirm the wallet signature to save this recovery request.";
+      return;
+    }
+
+    els.xVerifyButton.textContent = "Verify Wallet And Save";
+    els.xVerifyButton.disabled = !runtime.account || !runtime.signer;
+    els.xAuthLinkStatus.hidden = false;
+    els.xAuthLinkStatus.textContent = "Sign a wallet message to prove ownership and save your recovery request.";
+
+    return;
+  }
+
+  els.xAuthProfileLink.textContent = "@-";
+  els.xAuthProfileLink.href = "#";
+  els.xAuthProfileLink.hidden = true;
+  els.xAuthAvatar.hidden = true;
+  els.xAuthAvatar.removeAttribute("src");
+  els.xAuthAvatar.alt = "";
+  els.xVerifyButton.textContent = "Verify Wallet And Save";
+  els.xVerifyButton.disabled = true;
+  els.xAuthLinkStatus.hidden = true;
+  els.xAuthLinkStatus.textContent = "";
+
+  if (runtime.isConnectingX) {
+    els.xAuthStatus.hidden = false;
+    els.xAuthHint.hidden = false;
+    els.xAuthHint.textContent = "Complete the X approval flow to return here.";
+    els.xAuthStatus.textContent = "Finishing X sign-in...";
+    els.xAuthStatus.dataset.tone = "";
+    els.xAuthButton.textContent = "Signing in...";
+    els.xAuthButton.disabled = true;
+    return;
+  }
+
+  if (!isConfigured) {
+    els.xAuthStatus.hidden = false;
+    els.xAuthHint.hidden = false;
+    els.xAuthHint.textContent = "This deployment still needs the X auth backend and callback configured.";
+    els.xAuthStatus.textContent = "X sign-in is not configured yet.";
+    els.xAuthStatus.dataset.tone = "warn";
+    els.xAuthButton.textContent = "Sign in with X";
+    els.xAuthButton.disabled = true;
+    return;
+  }
+
+  els.xAuthStatus.hidden = false;
+  els.xAuthHint.hidden = false;
+  els.xAuthHint.textContent = "No claim was found for this wallet. Sign in with X to start follower recovery.";
+  els.xAuthStatus.textContent = "Not signed in.";
+  els.xAuthStatus.dataset.tone = "";
+  els.xAuthButton.textContent = "Sign in with X";
+  els.xAuthButton.disabled = false;
+}
+
 function setWalletMenuOpen(isOpen) {
   if (!els.walletMenu || !els.connectButton || !runtime.account) {
     els.walletMenu?.setAttribute("hidden", "");
@@ -165,6 +387,107 @@ async function copyWalletAddress() {
   document.execCommand("copy");
   input.remove();
   logger.log("Wallet address copied.", "success");
+}
+
+async function postXBackend(path, payload) {
+  const baseUrl = String(runtime.config?.xAuth?.backendUrl || "").trim().replace(/\/+$/u, "");
+  if (!baseUrl) {
+    throw new Error("X sign-in backend URL is not configured.");
+  }
+
+  const csrfToken = String(runtime.xSession?.csrfToken || "").trim();
+  if (!csrfToken) {
+    throw new Error("X sign-in session expired. Sign in again.");
+  }
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await response.text();
+  let parsed = {};
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = { error: text };
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(parsed?.error || "Request failed.");
+  }
+
+  return parsed;
+}
+
+async function verifyWalletAndSaveRecovery() {
+  if (!runtime.account || !runtime.signer) {
+    throw new Error("Connect the wallet you want to recover first.");
+  }
+
+  if (!shouldOfferXRecovery()) {
+    throw new Error("Recovery is only available when this wallet has no claim entries.");
+  }
+
+  if (!runtime.xSession?.profile?.username || !runtime.xSession?.csrfToken) {
+    throw new Error("Sign in with X first.");
+  }
+
+  const existingAccount = getSignedInXAccount();
+  const existingSubmission = getExistingXSubmission();
+  if (hasWalletOnFileForXAccount(existingAccount)) {
+    if (existingAccount?.walletSource === "form") {
+      throw new Error(formatExistingFormWalletStatus(existingAccount));
+    }
+    throw new Error(formatExistingRecoveryStatus());
+  }
+
+  if (existingSubmission) {
+    throw new Error(formatExistingRecoveryStatus());
+  }
+
+  runtime.isSubmittingXWalletLink = true;
+  syncXAuthCard();
+
+  try {
+    const challenge = await postXBackend("/api/x/link/challenge", {
+      walletAddress: runtime.account,
+    });
+
+    if (!challenge?.challengeId || !challenge?.message) {
+      throw new Error("Recovery challenge was not created.");
+    }
+
+    const signature = await runtime.signer.signMessage(challenge.message);
+    const result = await postXBackend("/api/x/link/complete", {
+      challengeId: challenge.challengeId,
+      walletAddress: runtime.account,
+      signature,
+    });
+
+    runtime.xSession = {
+      ...runtime.xSession,
+      account: result?.account || runtime.xSession?.account || null,
+      existingSubmission: result?.existingSubmission || runtime.xSession?.existingSubmission || null,
+      linkResult: result,
+    };
+    saveXSession(runtime.xSession);
+    syncXAuthCard();
+
+    const status = formatXLinkStatus(result);
+    logger.log(status, "success");
+  } finally {
+    runtime.isSubmittingXWalletLink = false;
+    syncXAuthCard();
+  }
 }
 
 async function addTokenToMetaMask() {
@@ -351,37 +674,10 @@ function renderRoundList() {
   });
 }
 
-async function buildRoundView(source) {
-  let artifact;
-  try {
-    artifact = await fetchClaimSource(source, runtime.claimCatalog.baseUrl, runtime.tokenDecimals);
-  } catch (error) {
-    if (isMissingClaimSourceError(error)) {
-      console.warn(
-        `[Claims] Claim file not found for epoch ${source.epoch}: ${source.file}`,
-        error,
-      );
-
-      return {
-        source,
-        artifact: null,
-        entry: null,
-        epoch: source.epoch,
-        amountRaw: 0n,
-        onchainRoot: ethers.ZeroHash,
-        deadline: 0n,
-        claimed: false,
-        status: "error",
-        errorMessage: "",
-      };
-    }
-
-    throw error;
-  }
-
-  const entry = runtime.account ? findClaimEntry(artifact, runtime.account) : null;
+async function buildRoundView(storedRound) {
+  const entry = storedRound?.entry || null;
   const amountRaw = entry ? BigInt(entry.amountRaw) : 0n;
-  const epoch = source.epoch;
+  const epoch = Number(storedRound?.epoch || 0);
 
   let onchainRoot = ethers.ZeroHash;
   let deadline = 0n;
@@ -410,7 +706,7 @@ async function buildRoundView(source) {
     status = "error";
   } else if (!epoch || !onchainRoot || onchainRoot === ethers.ZeroHash) {
     status = "not-live";
-  } else if (String(artifact.root || "").toLowerCase() !== onchainRoot.toLowerCase()) {
+  } else if (String(storedRound?.merkleRoot || "").toLowerCase() !== onchainRoot.toLowerCase()) {
     status = "mismatch";
   } else if (deadline === 0n || BigInt(Math.floor(Date.now() / 1000)) >= deadline) {
     status = "closed";
@@ -425,8 +721,8 @@ async function buildRoundView(source) {
   }
 
   return {
-    source,
-    artifact,
+    source: { epoch },
+    artifact: storedRound,
     entry,
     epoch,
     amountRaw,
@@ -439,15 +735,19 @@ async function buildRoundView(source) {
 }
 
 async function refreshRounds() {
-  if (!runtime.claimCatalog?.sources?.length) {
+  if (!runtime.account || !isClaimsApiConfigured(runtime.config)) {
     runtime.rounds = [];
     renderRoundList();
+    syncXAuthCard();
     return;
   }
 
-  runtime.rounds = await Promise.all(runtime.claimCatalog.sources.map((source) => buildRoundView(source)));
+  const payload = await fetchWalletClaimRounds(runtime.config, runtime.account);
+  const storedRounds = Array.isArray(payload?.rounds) ? payload.rounds : [];
+  runtime.rounds = await Promise.all(storedRounds.map((round) => buildRoundView(round)));
 
   renderRoundList();
+  syncXAuthCard();
 }
 
 async function refreshPage() {
@@ -561,6 +861,37 @@ function bindEvents() {
     }
   });
 
+  els.xAuthButton?.addEventListener("click", async () => {
+    try {
+      runtime.isConnectingX = true;
+      syncXAuthCard();
+      await startXLogin(runtime.config);
+    } catch (error) {
+      runtime.isConnectingX = false;
+      syncXAuthCard();
+      reportError(error, "Start X sign-in");
+    }
+  });
+
+  els.xDisconnectButton?.addEventListener("click", async () => {
+    try {
+      await logoutXSession(runtime.config, runtime.xSession);
+      runtime.xSession = null;
+      syncXAuthCard();
+      logger.log("X account disconnected.");
+    } catch (error) {
+      reportError(error, "Disconnect X account");
+    }
+  });
+
+  els.xVerifyButton?.addEventListener("click", async () => {
+    try {
+      await verifyWalletAndSaveRecovery();
+    } catch (error) {
+      reportError(error, "Verify X recovery");
+    }
+  });
+
   els.switchNetworkButton?.addEventListener("click", async () => {
     try {
       await switchNetwork();
@@ -617,6 +948,8 @@ function bindEvents() {
 
 async function init() {
   renderRoundList();
+  syncXSessionFromStorage();
+  syncXAuthCard();
   bindEvents();
   updateToastOffset();
 
@@ -628,8 +961,24 @@ async function init() {
       runtime.configSource = loaded.source;
       runtime.readProvider = null;
       runtime.readProviderKey = null;
+      syncXSessionFromStorage();
+      syncXAuthCard();
+
+      try {
+        const xAuthResult = await completeXLoginIfPresent(runtime.config);
+        runtime.xSession = xAuthResult.session || runtime.xSession;
+        if (xAuthResult.handled) {
+          logger.log("X account connected.", "success");
+        }
+      } catch (error) {
+        clearXSession();
+        runtime.xSession = null;
+        reportError(error, "Complete X sign-in");
+      }
+
+      runtime.isConnectingX = false;
+      syncXAuthCard();
       await ensureProvider(runtime).catch(() => null);
-      runtime.claimCatalog = await loadClaimCatalog(runtime.config.claimsManifestPath);
       await refreshPage();
     } catch (error) {
       reportError(error, "Initialize claimant page");

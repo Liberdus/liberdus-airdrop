@@ -1,3 +1,5 @@
+const { expect } = require("@playwright/test");
+
 async function connectViaWalletPicker(page) {
   await page.getByRole("button", { name: "Connect Wallet" }).click();
   await page.getByRole("button", { name: /MetaMask/i }).click();
@@ -32,12 +34,15 @@ async function getUtcDateTimeInputValue(page, unixTimestamp) {
 }
 
 async function startAirdropFromUpload(page, claimsFile, { deadlineSelector = "#startDeadlineInput" } = {}) {
+  const currentEpochText = (await page.locator("#currentEpoch").textContent())?.trim() || "0";
+  const currentEpoch = Number.parseInt(currentEpochText, 10) || 0;
+
   await page.locator("#uploadClaimsFileInput").setInputFiles(claimsFile);
   await setFutureDeadline(page, deadlineSelector);
   await page.getByRole("button", { name: "Fund Contract" }).click();
   await page.getByText("Fund airdrop complete.").waitFor();
   await page.getByRole("button", { name: "Start New Airdrop" }).click();
-  await page.getByText("Start airdrop complete.").waitFor();
+  await expect(page.locator("#currentEpoch")).toHaveText(String(currentEpoch + 1));
 }
 
 module.exports = {

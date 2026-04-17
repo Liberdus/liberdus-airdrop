@@ -17,7 +17,7 @@ test("admin can upload an existing claims file and gets a duplicate-root warning
   await page.getByRole("button", { name: "Fund Contract" }).click();
   await expect(page.getByText("Fund airdrop complete.")).toBeVisible();
   await page.getByRole("button", { name: "Start New Airdrop" }).click();
-  await expect(page.getByText("Start airdrop complete.")).toBeVisible();
+  await expect(page.locator("#currentEpoch")).toHaveText("1");
 
   await page.getByRole("button", { name: "Clear Claims" }).click();
   await page.locator("#uploadClaimsFileInput").setInputFiles(e2eClaimsFile);

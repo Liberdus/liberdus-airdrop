@@ -65,6 +65,41 @@
       <div class="center-stage">
         <section class="frame claim-card">
           <section class="claim-card-block">
+            <div id="xAuthCard" class="x-auth-card">
+              <div class="x-auth-copy">
+                <div>
+                  <h2>Sign In With X</h2>
+                  <p id="xAuthHint" class="hint">Attach your X account to this claim session.</p>
+                </div>
+              </div>
+
+              <div class="x-auth-shell">
+                <div id="xAuthIdentity" class="x-auth-identity" hidden>
+                  <img id="xAuthAvatar" class="x-auth-avatar" alt="" hidden>
+                  <div class="x-auth-profile">
+                    <a
+                      id="xAuthProfileLink"
+                      class="x-auth-link"
+                      href="#"
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    >@-</a>
+                  </div>
+                </div>
+
+                <p id="xAuthStatus" class="x-auth-status">Not signed in.</p>
+                <p id="xAuthLinkStatus" class="x-auth-status" hidden></p>
+
+                <div class="x-auth-actions">
+                  <button id="xAuthButton" type="button" class="secondary">Sign in with X</button>
+                  <button id="xVerifyButton" type="button" hidden>Verify Wallet And Save</button>
+                  <button id="xDisconnectButton" type="button" class="ghost" hidden>Sign out</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="claim-card-block">
             <div class="panel-title-row">
               <div>
                 <h2>Available Claims</h2>

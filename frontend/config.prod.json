@@ -8,7 +8,14 @@
     "symbol": "BNB",
     "decimals": 18
   },
+  "apiBaseUrl": "",
+  "deploymentKey": "",
   "claimsManifestPath": "./claims/index.json",
+  "xAuth": {
+    "enabled": true,
+    "redirectUri": "",
+    "backendUrl": ""
+  },
   "tokenAddress": "",
   "airdropAddress": ""
 }
