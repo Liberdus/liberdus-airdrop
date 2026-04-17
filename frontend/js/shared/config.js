@@ -33,6 +33,7 @@ export async function loadUiConfig() {
   const overrides = savedOverrides ? JSON.parse(savedOverrides) : {};
   const loadedXAuth = loaded?.xAuth && typeof loaded.xAuth === "object" ? loaded.xAuth : {};
   const overrideXAuth = overrides?.xAuth && typeof overrides.xAuth === "object" ? overrides.xAuth : {};
+  const hasOverrideExplorerBaseUrl = Object.prototype.hasOwnProperty.call(overrides, "explorerBaseUrl");
 
   const config = {
     claimsManifestPath: "./claims/index.json",
@@ -53,7 +54,11 @@ export async function loadUiConfig() {
       || ""
     ).trim(),
     deploymentKey: String(loaded.deploymentKey || "").trim(),
-    explorerBaseUrl: String(overrides.explorerBaseUrl || loaded.explorerBaseUrl || "").trim(),
+    explorerBaseUrl: String(
+      hasOverrideExplorerBaseUrl
+        ? overrides.explorerBaseUrl
+        : (loaded.explorerBaseUrl || "")
+    ).trim(),
     xAuth: {
       enabled: overrideXAuth.enabled ?? loadedXAuth.enabled ?? true,
       redirectUri: String(overrideXAuth.redirectUri || loadedXAuth.redirectUri || loaded.xRedirectUri || "").trim(),

@@ -1,7 +1,7 @@
 const { expect, test } = require("../../fixtures/testWithMockWallet");
 const { connectViaWalletPicker, startAirdropFromUpload } = require("../helpers");
 
-test("claimant only sees deployed active rounds sorted newest-first", async ({ page, e2eClaimsFile, e2eClaimsFileEpoch2, e2eMultiEpochManifest, mockWallet }) => {
+test("claimant only sees deployed active rounds sorted newest-first", async ({ page, e2eClaimsFile, e2eClaimsFileEpoch2, mockWallet }) => {
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
 
@@ -9,7 +9,6 @@ test("claimant only sees deployed active rounds sorted newest-first", async ({ p
   await startAirdropFromUpload(page, e2eClaimsFileEpoch2);
   await expect(page.locator("#currentEpoch")).toHaveText("2");
 
-  await mockWallet.setUiConfig(page, { claimsManifestPath: e2eMultiEpochManifest });
   await mockWallet.setAccount(page, mockWallet.accounts.claimant);
   await page.goto("index.html");
 

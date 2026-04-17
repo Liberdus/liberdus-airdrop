@@ -20,7 +20,7 @@ module.exports = defineConfig({
     {
       command: "npm run node",
       port: 8545,
-      reuseExistingServer: false,
+      reuseExistingServer: !process.env.CI,
       stdout: "pipe",
       stderr: "pipe",
       timeout: 120_000,

@@ -29,7 +29,6 @@ test("@smoke admin claims builder can prepare and start a matching airdrop", asy
   await expect(page.getByText("Fund airdrop complete.")).toBeVisible();
 
   await page.getByRole("button", { name: "Start New Airdrop" }).click();
-  await expect(page.getByText("Start airdrop complete.")).toBeVisible();
   await expect(page.locator("#currentEpoch")).toHaveText("1");
   await expect(page.getByRole("button", { name: "Start New Airdrop" })).toBeDisabled();
   await expect(page.locator("#startRootWarning")).toContainText("already started successfully");

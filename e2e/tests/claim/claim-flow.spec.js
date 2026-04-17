@@ -11,7 +11,7 @@ test("@smoke claimant can claim from the wrong network after wallet switch", asy
   await page.getByRole("button", { name: "Fund Contract" }).click();
   await expect(page.getByText("Fund airdrop complete.")).toBeVisible();
   await page.getByRole("button", { name: "Start New Airdrop" }).click();
-  await expect(page.getByText("Start airdrop complete.")).toBeVisible();
+  await expect(page.locator("#currentEpoch")).toHaveText("1");
 
   await mockWallet.setAccount(page, mockWallet.accounts.claimant);
   await mockWallet.setChainId(page, toHexChainId(31337));
@@ -37,7 +37,7 @@ test("claimant outsider sees the generic empty state", async ({ page, e2eClaimsF
   await page.getByRole("button", { name: "Fund Contract" }).click();
   await expect(page.getByText("Fund airdrop complete.")).toBeVisible();
   await page.getByRole("button", { name: "Start New Airdrop" }).click();
-  await expect(page.getByText("Start airdrop complete.")).toBeVisible();
+  await expect(page.locator("#currentEpoch")).toHaveText("1");
 
   await mockWallet.setAccount(page, mockWallet.accounts.outsider);
   await page.goto("index.html");
