@@ -98,6 +98,29 @@ function getCallbackUrl() {
   return String(process.env.X_OAUTH1_CALLBACK_URL || "").trim();
 }
 
+function getPublicXCallbackPath() {
+  const callbackUrl = getCallbackUrl();
+  if (!callbackUrl) {
+    return "/api/x/callback";
+  }
+
+  try {
+    const pathname = new URL(callbackUrl).pathname || "/api/x/callback";
+    return pathname.startsWith("/") ? pathname : `/${pathname}`;
+  } catch {
+    return "/api/x/callback";
+  }
+}
+
+function getPublicXCookieBasePath() {
+  const callbackPath = getPublicXCallbackPath();
+  if (callbackPath.endsWith("/callback")) {
+    return callbackPath.slice(0, -"/callback".length + 1);
+  }
+
+  return "/api/x/";
+}
+
 function getAllowedOrigins() {
   const rawValue = String(process.env.X_AUTH_ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGIN);
   return rawValue
@@ -601,7 +624,7 @@ function getRequiredSessionFromCookie(request, response) {
   const session = authSessions.get(sessionId);
   if (!session) {
     clearCookie(response, AUTH_SESSION_COOKIE_NAME, {
-      path: "/api/x/",
+      path: getPublicXCookieBasePath(),
       sameSite: "Lax",
       secure: shouldUseSecureCookies(),
     });
@@ -611,7 +634,7 @@ function getRequiredSessionFromCookie(request, response) {
   if (session.expiresAtMs <= Date.now()) {
     deleteAuthSession(sessionId);
     clearCookie(response, AUTH_SESSION_COOKIE_NAME, {
-      path: "/api/x/",
+      path: getPublicXCookieBasePath(),
       sameSite: "Lax",
       secure: shouldUseSecureCookies(),
     });
@@ -622,7 +645,7 @@ function getRequiredSessionFromCookie(request, response) {
   if (!secureEquals(session.userAgentHash, userAgentHash)) {
     deleteAuthSession(sessionId);
     clearCookie(response, AUTH_SESSION_COOKIE_NAME, {
-      path: "/api/x/",
+      path: getPublicXCookieBasePath(),
       sameSite: "Lax",
       secure: shouldUseSecureCookies(),
     });
@@ -931,7 +954,7 @@ async function handleStart(request, response) {
     sameSite: "Lax",
     secure: shouldUseSecureCookies(),
     maxAge: Math.ceil(REQUEST_TOKEN_TTL_MS / 1000),
-    path: "/api/x/callback",
+    path: getPublicXCallbackPath(),
   });
 
   const authorizeUrl = new URL(AUTHORIZE_URL);
@@ -951,7 +974,7 @@ async function handleCallback(request, response) {
     const returnUri = deniedRequest?.returnUri || getDefaultFrontendReturnUrl();
     requestTokens.delete(deniedToken);
     clearCookie(response, AUTH_INIT_COOKIE_NAME, {
-      path: "/api/x/callback",
+      path: getPublicXCallbackPath(),
       sameSite: "Lax",
       secure: shouldUseSecureCookies(),
     });
@@ -967,7 +990,7 @@ async function handleCallback(request, response) {
   const pending = requestTokens.get(oauthToken);
   if (!pending) {
     clearCookie(response, AUTH_INIT_COOKIE_NAME, {
-      path: "/api/x/callback",
+      path: getPublicXCallbackPath(),
       sameSite: "Lax",
       secure: shouldUseSecureCookies(),
     });
@@ -980,7 +1003,7 @@ async function handleCallback(request, response) {
   const initNonce = String(cookies[AUTH_INIT_COOKIE_NAME] || "").trim();
   if (!initNonce || !secureEquals(initNonce, pending.initNonce)) {
     clearCookie(response, AUTH_INIT_COOKIE_NAME, {
-      path: "/api/x/callback",
+      path: getPublicXCallbackPath(),
       sameSite: "Lax",
       secure: shouldUseSecureCookies(),
     });
@@ -1034,7 +1057,7 @@ async function handleCallback(request, response) {
     });
 
     clearCookie(response, AUTH_INIT_COOKIE_NAME, {
-      path: "/api/x/callback",
+      path: getPublicXCallbackPath(),
       sameSite: "Lax",
       secure: shouldUseSecureCookies(),
     });
@@ -1043,12 +1066,12 @@ async function handleCallback(request, response) {
       sameSite: "Lax",
       secure: shouldUseSecureCookies(),
       maxAge: Math.ceil(AUTH_SESSION_TTL_MS / 1000),
-      path: "/api/x/",
+      path: getPublicXCookieBasePath(),
     });
     redirect(response, appendCompleteRedirect(pending.returnUri));
   } catch (error) {
     clearCookie(response, AUTH_INIT_COOKIE_NAME, {
-      path: "/api/x/callback",
+      path: getPublicXCallbackPath(),
       sameSite: "Lax",
       secure: shouldUseSecureCookies(),
     });
@@ -1397,7 +1420,7 @@ async function handleLogout(request, response) {
   }
 
   clearCookie(response, AUTH_SESSION_COOKIE_NAME, {
-    path: "/api/x/",
+    path: getPublicXCookieBasePath(),
     sameSite: "Lax",
     secure: shouldUseSecureCookies(),
   });
