@@ -6,6 +6,7 @@ test("claimant sees an underfunded airdrop error when the contract balance is dr
   await connectViaWalletPicker(page);
   await startAirdropFromUpload(page, e2eClaimsFile);
 
+  await page.getByRole("button", { name: "Contract", exact: true }).click();
   await page.locator("#withdrawRecipient").fill(mockWallet.accounts.owner);
   await page.locator("#withdrawAmount").fill("100");
   await page.getByRole("button", { name: "Withdraw" }).click();
