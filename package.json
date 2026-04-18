@@ -19,6 +19,7 @@
     "fund:owner:local": "hardhat fund-owner-wallet --network localhost",
     "serve:e2e": "node scripts/e2e/static-server.js",
     "merkle": "node scripts/generate-merkle.js",
+    "db:backup": "node backend/backup-db.js",
     "accounts:import": "node backend/import-accounts.js",
     "followers:import": "node backend/import-x-followers.js",
     "recovery-candidates:import": "node backend/import-recovery-candidates.js",

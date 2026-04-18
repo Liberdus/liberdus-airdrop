@@ -352,11 +352,26 @@ npm ci
 cp frontend/config.prod.json frontend/config.json   # or config.test.json
 # update frontend/config.json if needed
 # update .env if needed
+npm run db:backup -- --label pre-deploy
 npm run accounts:import -- --file /absolute/path/to/latest-combined.csv
 PM2_APP_NAME=liberdus-airdrop-prod npm run pm2:restart
 ```
 
 Use the matching PM2 app name for test.
+
+The backup command creates a consistent SQLite snapshot under `backups/` by default:
+
+```bash
+npm run db:backup
+```
+
+Useful options:
+
+```bash
+npm run db:backup -- --label pre-deploy
+npm run db:backup -- --dir /absolute/path/to/backups
+npm run db:backup -- --output /absolute/path/to/liberdus-pre-deploy.sqlite
+```
 
 If the server clone cannot use GitHub SSH keys, set the checkout remote to HTTPS first:
 
