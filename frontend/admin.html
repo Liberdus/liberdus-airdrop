@@ -84,313 +84,428 @@
           </article>
         </div>
 
-        <p id="adminGateMessage" class="hint">Connect the owner wallet to view admin controls.</p>
+        <p id="adminGateMessage" class="hint">Connect the owner or pending owner wallet to view admin controls.</p>
         <button id="switchNetworkGateButton" type="button" class="ghost" hidden>Switch to Configured Network</button>
       </section>
 
-      <div id="adminShell" hidden>
-        <section class="frame status-panel">
-          <div class="panel-title-row">
-            <div>
-              <h2>Contract Status</h2>
-            </div>
-            <button id="refreshButton" type="button" class="ghost">Refresh</button>
-          </div>
-
-          <div class="status-grid">
-            <article><h3>Current Epoch</h3><p id="currentEpoch">-</p></article>
-            <article><h3>Token</h3><p id="tokenSummary">-</p></article>
-            <article><h3>Wallet Token Balance</h3><p id="walletTokenBalance">-</p></article>
-            <article><h3>Airdrop Token Balance</h3><p id="airdropTokenBalance">-</p></article>
-          </div>
-        </section>
-
-        <section class="frame">
-          <div class="panel-title-row">
-            <div>
-              <h2>Prepare New Airdrop</h2>
-            </div>
-          </div>
-
-          <div class="builder-shell">
-            <div class="subsection-header">
-              <div>
-                <h3>Build Claims JSON</h3>
-                <p class="hint">Create the raw claims list here, then start the airdrop. After the transaction confirms, the verified round is stored in the backend automatically.</p>
-              </div>
-            </div>
-
-            <form id="claimsBuilderForm" class="form-grid builder-form" autocomplete="off">
-              <label>
-                <span>Download File Name</span>
-                <input id="builderFileNameInput" type="text" placeholder="round-1.claims.json">
-              </label>
-              <div class="full-width button-row">
-                <button id="loadBuilderButton" type="button">Use Built Claims</button>
-                <button id="downloadBuilderButton" type="button" class="secondary">Download JSON</button>
-                <button id="clearBuilderButton" type="button" class="ghost">Clear Table</button>
-              </div>
-              <p class="hint full-width">Indexes are assigned automatically when the JSON is generated. Enter token amounts in human units.</p>
-            </form>
-
-            <div class="detail-list builder-summary-list">
-              <article class="detail-item">
-                <h3>Wallets</h3>
-                <p id="builderClaimCount">-</p>
-              </article>
-              <article class="detail-item">
-                <h3>Total</h3>
-                <p id="builderClaimTotal">-</p>
-              </article>
-              <article class="detail-item">
-                <h3>Merkle Root</h3>
-                <p id="builderMerkleRoot">-</p>
-              </article>
-            </div>
-
-            <div class="table-wrap builder-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Index</th>
-                    <th>Wallet</th>
-                    <th>Amount</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody id="claimsBuilderBody">
-                  <tr><td colspan="4" class="empty-row">Add wallet rows to build a claims JSON file.</td></tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div class="button-row builder-table-actions">
-              <button id="addBuilderRowButton" type="button" class="ghost">Add Row</button>
-              <p id="builderValidationMessage" class="form-warning builder-inline-warning" hidden></p>
-            </div>
-
-            <div class="builder-divider" aria-hidden="true"></div>
-
-            <div class="subsection-header">
-              <div>
-                <h3>Upload Existing Claims JSON</h3>
-                <p class="hint">Use this when the raw claims list was prepared outside the admin page.</p>
-              </div>
-            </div>
-          </div>
-
-          <form id="startAirdropForm" class="form-grid">
-            <label class="full-width">
-              <span>Claims JSON</span>
-              <input id="uploadClaimsFileInput" type="file" accept=".json,application/json">
-            </label>
-            <label class="full-width">
-              <span>Merkle Root</span>
-              <input id="startRootInput" type="text" placeholder="Upload or build a claims JSON file" readonly>
-            </label>
-            <p id="startRootWarning" class="form-warning full-width" hidden></p>
-            <label>
-              <span>Deadline (local time)</span>
-              <input id="startDeadlineInput" type="datetime-local">
-            </label>
-            <label>
-              <span>Deadline (UTC)</span>
-              <input id="startDeadlineUtcInput" type="datetime-local">
-            </label>
-            <label>
-              <span>Unix Deadline</span>
-              <input id="startDeadlineUnix" type="text" readonly>
-            </label>
-            <div class="full-width button-row">
-              <button id="startAirdropButton" type="submit">Start New Airdrop</button>
-              <button id="clearUploadedButton" type="button" class="ghost" disabled>Clear Claims</button>
-            </div>
-          </form>
-
-          <div class="table-wrap upload-preview-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Index</th>
-                  <th>Wallet</th>
-                  <th>Amount</th>
-                </tr>
-              </thead>
-              <tbody id="uploadPreviewBody">
-                <tr><td colspan="3" class="empty-row">Upload or build a claims JSON file to preview it.</td></tr>
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colspan="2" id="uploadedClaimCount" class="table-footer-label">-</td>
-                  <td class="table-footer-value">
-                    <div class="table-footer-actions">
-                      <span id="uploadedClaimTotal">-</span>
-                      <button id="fundUploadedButton" type="button" class="secondary" disabled>Fund Contract</button>
-                    </div>
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </section>
-
-        <section class="frame">
-          <div class="panel-title-row">
-            <div>
-              <h2>Epoch Management</h2>
-            </div>
-          </div>
-
-          <form id="updateDeadlineForm" class="form-grid">
-            <label>
-              <span>Epoch</span>
-              <input id="updateEpochInput" type="number" min="1" placeholder="1">
-            </label>
-            <label>
-              <span>Deadline (local time)</span>
-              <input id="updateDeadlineInput" type="datetime-local">
-            </label>
-            <label>
-              <span>Deadline (UTC)</span>
-              <input id="updateDeadlineUtcInput" type="datetime-local">
-            </label>
-            <label>
-              <span>Unix Deadline</span>
-              <input id="updateDeadlineUnix" type="text" readonly>
-            </label>
-            <div class="full-width button-row">
-              <button type="submit">Update Deadline</button>
-              <button id="disableEpochButton" type="button" class="danger">Disable Epoch</button>
-            </div>
-          </form>
-
-          <div class="panel-title-row">
-            <div>
-              <h2>Treasury</h2>
-            </div>
-          </div>
-
-          <div class="card-grid">
-            <form id="fundAirdropForm" class="card-form">
-              <h3>Fund Airdrop Contract</h3>
-              <label><span>Amount</span><input id="fundAirdropAmount" type="text" placeholder="100"></label>
-              <button type="submit">Transfer LIB to Airdrop</button>
-            </form>
-
-            <form id="withdrawForm" class="card-form">
-              <h3>Withdraw LIB</h3>
-              <label><span>Recipient</span><input id="withdrawRecipient" type="text" placeholder="0x..."></label>
-              <label><span>Amount</span><input id="withdrawAmount" type="text" placeholder="10"></label>
-              <button type="submit">Withdraw</button>
-            </form>
-
-            <form id="recoverForm" class="card-form">
-              <h3>Recover ERC20</h3>
-              <label><span>ERC20 Address</span><input id="recoverTokenAddress" type="text" placeholder="0x..."></label>
-              <label><span>Recipient</span><input id="recoverRecipient" type="text" placeholder="0x..."></label>
-              <label><span>Amount</span><input id="recoverAmount" type="text" placeholder="5"></label>
-              <button type="submit">Recover Token</button>
-            </form>
-          </div>
-        </section>
-
-        <section class="frame">
-          <div class="panel-title-row">
-            <div>
-              <h2>All Epochs</h2>
-            </div>
-          </div>
-
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Epoch</th>
-                  <th>Merkle Root</th>
-                  <th>Deadline</th>
-                  <th>Status</th>
-                  <th>Claimed / Total</th>
-                </tr>
-              </thead>
-              <tbody id="epochListBody">
-                <tr><td colspan="5" class="empty-row">No epochs started yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="split-shell">
-          <section class="frame">
-            <div class="panel-title-row">
-              <div>
-                <h2>Lookup Epoch</h2>
-              </div>
-            </div>
-
-            <form id="epochQueryForm" class="card-form">
-              <label><span>Epoch</span><input id="queryEpochInput" type="number" min="1" placeholder="1"></label>
-              <button type="submit">Fetch Epoch Data</button>
-              <pre id="epochQueryResult" class="result-block">-</pre>
-            </form>
-          </section>
-
-          <section class="frame">
-            <div class="panel-title-row">
-              <div>
-                <h2>Check Claim Status</h2>
-              </div>
-            </div>
-
-            <form id="claimStatusForm" class="card-form">
-              <label><span>Epoch</span><input id="claimedEpochInput" type="number" min="1" placeholder="1"></label>
-              <label><span>Index</span><input id="claimedIndexInput" type="number" min="0" placeholder="0"></label>
-              <button type="submit">Check Claim Status</button>
-              <pre id="claimStatusResult" class="result-block">-</pre>
-            </form>
-          </section>
-        </section>
-
-      </div>
-
-      <section id="ownershipShell" class="frame" hidden>
+      <section id="pendingOwnerShell" class="frame" hidden>
         <div class="panel-title-row">
           <div>
-            <h2>Ownership Transfer</h2>
-            <p class="hint">Ownable2Step uses two transactions: the current owner nominates a pending owner, then that pending owner accepts from their wallet.</p>
+            <h2>Accept Ownership</h2>
+            <p class="hint">This wallet is the pending owner. Accept ownership here to unlock the full admin workspace.</p>
           </div>
         </div>
 
         <div class="detail-list">
           <article class="detail-item">
             <h3>Current Owner</h3>
-            <p id="ownershipCurrentOwner">-</p>
+            <p id="pendingOwnershipCurrentOwner">-</p>
           </article>
           <article class="detail-item">
             <h3>Pending Owner</h3>
-            <p id="ownershipPendingOwner">-</p>
-          </article>
-          <article class="detail-item">
-            <h3>Connected Wallet</h3>
-            <p id="ownershipConnectedWallet">-</p>
+            <p id="pendingOwnershipPendingOwner">-</p>
           </article>
         </div>
 
-        <p id="ownershipStatusMessage" class="hint">Connect the owner or pending owner wallet on the configured network to manage ownership.</p>
-
-        <div class="card-grid ownership-grid">
-          <form id="transferOwnershipForm" class="card-form">
-            <h3>Set Pending Owner</h3>
-            <label><span>New Owner Address</span><input id="transferOwnershipAddress" type="text" placeholder="0x..."></label>
-            <button id="transferOwnershipButton" type="submit">Transfer Ownership</button>
-          </form>
-
-          <form id="acceptOwnershipForm" class="card-form">
-            <h3>Accept Ownership</h3>
-            <p class="hint">Only the pending owner can complete the second step.</p>
-            <button id="acceptOwnershipButton" type="submit">Accept Ownership</button>
-          </form>
+        <div class="button-row">
+          <button id="pendingAcceptOwnershipButton" type="button">Accept Ownership</button>
         </div>
       </section>
+
+      <div id="adminShell" hidden>
+        <section class="frame admin-tabs-shell">
+          <div class="panel-title-row">
+            <div>
+              <h2>Admin Workspace</h2>
+              <p class="hint">Save rounds to the database first, then deploy them from the rounds tab when you are ready. Drafts do not reserve an epoch.</p>
+            </div>
+            <button id="refreshButton" type="button" class="ghost">Refresh</button>
+          </div>
+
+          <div class="detail-list admin-summary-list">
+            <article class="detail-item">
+              <h3>Latest Epoch</h3>
+              <p id="currentEpoch">-</p>
+            </article>
+            <article class="detail-item">
+              <h3>Token</h3>
+              <p id="tokenSummary">-</p>
+            </article>
+            <article class="detail-item">
+              <h3>Wallet LIB</h3>
+              <p id="walletTokenBalance">-</p>
+            </article>
+            <article class="detail-item">
+              <h3>Airdrop LIB</h3>
+              <p id="airdropTokenBalance">-</p>
+            </article>
+          </div>
+
+          <div class="admin-tabs" role="tablist" aria-label="Admin sections">
+            <button type="button" class="admin-tab-button" data-admin-tab="prepare" aria-selected="true">Prepare</button>
+            <button type="button" class="admin-tab-button" data-admin-tab="rounds" aria-selected="false">Rounds</button>
+            <button type="button" class="admin-tab-button" data-admin-tab="contract" aria-selected="false">Contract</button>
+            <button type="button" class="admin-tab-button" data-admin-tab="lookups" aria-selected="false">Lookups</button>
+          </div>
+        </section>
+
+        <div class="admin-tab-panel" data-admin-panel="prepare">
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Prepare New Airdrop</h2>
+                <p class="hint">Build or upload a claims set here, save it to the database, then fund and deploy the saved draft from the rounds tab.</p>
+              </div>
+            </div>
+
+            <div class="builder-shell">
+              <div class="subsection-header">
+                <div>
+                  <h3>Build Claims JSON</h3>
+                  <p class="hint">Create the raw claims list here. Saving the draft first protects the proofs if the page refreshes before deployment.</p>
+                </div>
+              </div>
+
+              <form id="claimsBuilderForm" class="form-grid builder-form" autocomplete="off">
+                <label>
+                  <span>Download File Name</span>
+                  <input id="builderFileNameInput" type="text" placeholder="round-1.claims.json">
+                </label>
+                <div class="full-width button-row">
+                  <button id="loadBuilderButton" type="button">Use Built Claims</button>
+                  <button id="downloadBuilderButton" type="button" class="secondary">Download JSON</button>
+                  <button id="clearBuilderButton" type="button" class="ghost">Clear Table</button>
+                </div>
+                <p class="hint full-width">Indexes are assigned automatically when the JSON is generated. Enter token amounts in human units.</p>
+              </form>
+
+              <div class="detail-list builder-summary-list">
+                <article class="detail-item">
+                  <h3>Wallets</h3>
+                  <p id="builderClaimCount">-</p>
+                </article>
+                <article class="detail-item">
+                  <h3>Total</h3>
+                  <p id="builderClaimTotal">-</p>
+                </article>
+                <article class="detail-item">
+                  <h3>Merkle Root</h3>
+                  <p id="builderMerkleRoot">-</p>
+                </article>
+              </div>
+
+              <div class="table-wrap builder-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Index</th>
+                      <th>Wallet</th>
+                      <th>Amount</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="claimsBuilderBody">
+                    <tr><td colspan="4" class="empty-row">Add wallet rows to build a claims JSON file.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="button-row builder-table-actions">
+                <button id="addBuilderRowButton" type="button" class="ghost">Add Row</button>
+                <p id="builderValidationMessage" class="form-warning builder-inline-warning" hidden></p>
+              </div>
+
+              <div class="builder-divider" aria-hidden="true"></div>
+
+              <div class="subsection-header">
+                <div>
+                  <h3>Upload Existing Claims JSON</h3>
+                  <p class="hint">Use this when the raw claims list was prepared outside the admin page.</p>
+                </div>
+              </div>
+            </div>
+
+            <form id="startAirdropForm" class="form-grid">
+              <label class="full-width">
+                <span>Claims JSON</span>
+                <input id="uploadClaimsFileInput" type="file" accept=".json,application/json">
+              </label>
+              <label class="full-width">
+                <span>Merkle Root</span>
+                <input id="startRootInput" type="text" placeholder="Upload or build a claims JSON file" readonly>
+              </label>
+              <p id="startRootWarning" class="form-warning full-width" hidden></p>
+              <label>
+                <span>Deadline (local time)</span>
+                <input id="startDeadlineInput" type="datetime-local">
+              </label>
+              <label>
+                <span>Deadline (UTC)</span>
+                <input id="startDeadlineUtcInput" type="datetime-local">
+              </label>
+              <label>
+                <span>Unix Deadline</span>
+                <input id="startDeadlineUnix" type="text" readonly>
+              </label>
+              <div class="full-width button-row">
+                <button id="startAirdropButton" type="submit">Save Round to DB</button>
+                <button id="clearUploadedButton" type="button" class="ghost" disabled>Clear Claims</button>
+              </div>
+            </form>
+
+            <div class="table-wrap upload-preview-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Index</th>
+                    <th>Wallet</th>
+                    <th>Amount</th>
+                  </tr>
+                </thead>
+                <tbody id="uploadPreviewBody">
+                  <tr><td colspan="3" class="empty-row">Upload or build a claims JSON file to preview it.</td></tr>
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colspan="2" id="uploadedClaimCount" class="table-footer-label">-</td>
+                    <td class="table-footer-value">
+                      <div class="table-footer-actions">
+                        <span id="uploadedClaimTotal">-</span>
+                      </div>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div class="admin-tab-panel" data-admin-panel="rounds" hidden>
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Airdrop Rounds</h2>
+                <p class="hint">Drafts come from the database. Deployed rows are merged with onchain epochs so you can see what is live, what is only saved, and what still needs funding or deployment.</p>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Round</th>
+                    <th>Merkle Root</th>
+                    <th>Deadline</th>
+                    <th>Status</th>
+                    <th>Total</th>
+                    <th>Source</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="epochListBody">
+                  <tr><td colspan="7" class="empty-row">No rounds found yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="roundClaimsSection" class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Round Claims</h2>
+                <p id="selectedRoundMeta" class="hint">Choose a stored round to inspect its claim entries.</p>
+              </div>
+              <button id="refreshRoundClaimsStatusButton" type="button" class="ghost" disabled>Load Claimed Status</button>
+            </div>
+
+            <div class="detail-list builder-summary-list">
+              <article class="detail-item">
+                <h3>Selected Round</h3>
+                <p id="selectedRoundLabel">None selected</p>
+              </article>
+              <article class="detail-item">
+                <h3>Claim Rows</h3>
+                <p id="selectedRoundClaimCount">-</p>
+              </article>
+              <article class="detail-item">
+                <h3>Total</h3>
+                <p id="selectedRoundTotal">-</p>
+              </article>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Claim Index</th>
+                      <th>Username</th>
+                      <th>Wallet</th>
+                      <th>Amount</th>
+                    <th>Claimed</th>
+                  </tr>
+                </thead>
+                <tbody id="roundClaimsBody">
+                  <tr><td colspan="5" class="empty-row">Select a stored round to view its claims.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div class="admin-tab-panel" data-admin-panel="contract" hidden>
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Epoch Management</h2>
+              </div>
+            </div>
+
+            <form id="updateDeadlineForm" class="form-grid">
+              <label>
+                <span>Epoch</span>
+                <input id="updateEpochInput" type="number" min="1" placeholder="1">
+              </label>
+              <label>
+                <span>Deadline (local time)</span>
+                <input id="updateDeadlineInput" type="datetime-local">
+              </label>
+              <label>
+                <span>Deadline (UTC)</span>
+                <input id="updateDeadlineUtcInput" type="datetime-local">
+              </label>
+              <label>
+                <span>Unix Deadline</span>
+                <input id="updateDeadlineUnix" type="text" readonly>
+              </label>
+              <div class="full-width button-row">
+                <button type="submit">Update Deadline</button>
+                <button id="disableEpochButton" type="button" class="danger">Disable Epoch</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Treasury</h2>
+              </div>
+            </div>
+
+            <div class="card-grid">
+              <form id="fundAirdropForm" class="card-form">
+                <h3>Fund Airdrop Contract</h3>
+                <label><span>Amount</span><input id="fundAirdropAmount" type="text" placeholder="100"></label>
+                <button type="submit">Transfer LIB to Airdrop</button>
+              </form>
+
+              <form id="withdrawForm" class="card-form">
+                <h3>Withdraw LIB</h3>
+                <label><span>Recipient</span><input id="withdrawRecipient" type="text" placeholder="0x..."></label>
+                <label><span>Amount</span><input id="withdrawAmount" type="text" placeholder="10"></label>
+                <button type="submit">Withdraw</button>
+              </form>
+
+              <form id="recoverForm" class="card-form">
+                <h3>Recover ERC20</h3>
+                <label><span>ERC20 Address</span><input id="recoverTokenAddress" type="text" placeholder="0x..."></label>
+                <label><span>Recipient</span><input id="recoverRecipient" type="text" placeholder="0x..."></label>
+                <label><span>Amount</span><input id="recoverAmount" type="text" placeholder="5"></label>
+                <button type="submit">Recover Token</button>
+              </form>
+            </div>
+          </section>
+
+          <section id="ownershipShell" class="frame" hidden>
+            <div class="panel-title-row">
+              <div>
+                <h2>Ownership Transfer</h2>
+                <p class="hint">Ownable2Step uses two transactions: the current owner nominates a pending owner, then that pending owner accepts from their wallet.</p>
+              </div>
+            </div>
+
+            <div class="detail-list">
+              <article class="detail-item">
+                <h3>Current Owner</h3>
+                <p id="ownershipCurrentOwner">-</p>
+              </article>
+              <article class="detail-item">
+                <h3>Pending Owner</h3>
+                <p id="ownershipPendingOwner">-</p>
+              </article>
+              <article class="detail-item">
+                <h3>Connected Wallet</h3>
+                <p id="ownershipConnectedWallet">-</p>
+              </article>
+            </div>
+
+            <p id="ownershipStatusMessage" class="hint">Connect the owner or pending owner wallet on the configured network to manage ownership.</p>
+
+            <div class="card-grid ownership-grid">
+              <form id="transferOwnershipForm" class="card-form">
+                <h3>Set Pending Owner</h3>
+                <label><span>New Owner Address</span><input id="transferOwnershipAddress" type="text" placeholder="0x..."></label>
+                <button id="transferOwnershipButton" type="submit">Transfer Ownership</button>
+              </form>
+
+              <form id="acceptOwnershipForm" class="card-form">
+                <h3>Accept Ownership</h3>
+                <p class="hint">Only the pending owner can complete the second step.</p>
+                <button id="acceptOwnershipButton" type="submit">Accept Ownership</button>
+              </form>
+            </div>
+          </section>
+        </div>
+
+        <div class="admin-tab-panel" data-admin-panel="lookups" hidden>
+          <section class="split-shell">
+            <section class="frame">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Lookup Epoch</h2>
+                </div>
+              </div>
+
+              <form id="epochQueryForm" class="card-form">
+                <label><span>Epoch</span><input id="queryEpochInput" type="number" min="1" placeholder="1"></label>
+                <button type="submit">Fetch Epoch Data</button>
+                <pre id="epochQueryResult" class="result-block">-</pre>
+              </form>
+            </section>
+
+            <section class="frame">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Lookup Claim(s)</h2>
+                  <p class="hint">Enter a wallet address to list every stored claim tied to that address.</p>
+                </div>
+              </div>
+
+              <form id="claimStatusForm" class="card-form">
+                <label><span>Wallet Address</span><input id="claimLookupInput" type="text" placeholder="0x..."></label>
+                <button type="submit">Lookup Claim(s)</button>
+              </form>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Round</th>
+                      <th>Claim Index</th>
+                      <th>Username</th>
+                      <th>Wallet</th>
+                      <th>Amount</th>
+                      <th>Claimed</th>
+                    </tr>
+                  </thead>
+                  <tbody id="claimLookupBody">
+                    <tr><td colspan="6" class="empty-row">Run a wallet lookup to view stored claims.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+        </div>
+      </div>
     </main>
 
     <script type="module" src="./js/pages/admin.js"></script>

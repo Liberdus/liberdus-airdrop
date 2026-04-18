@@ -1,7 +1,7 @@
 const { expect, test } = require("../../fixtures/testWithMockWallet");
 const { connectViaWalletPicker, setFutureDeadline } = require("../helpers");
 
-test("@smoke admin claims builder can prepare and start a matching airdrop", async ({ page, mockWallet }) => {
+test("@smoke admin claims builder can save and deploy a matching airdrop draft", async ({ page, mockWallet }) => {
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
 
@@ -25,12 +25,13 @@ test("@smoke admin claims builder can prepare and start a matching airdrop", asy
   await setFutureDeadline(page, "#startDeadlineInput");
   await expect(page.locator("#startDeadlineUnix")).not.toHaveValue("");
 
-  await page.getByRole("button", { name: "Fund Contract" }).click();
+  await page.getByRole("button", { name: "Save Round to DB" }).click();
+  await expect(page.locator("#selectedRoundLabel")).toContainText("Draft");
+  await page.getByRole("button", { name: "Fund Total" }).first().click();
   await expect(page.getByText("Fund airdrop complete.")).toBeVisible();
-
-  await page.getByRole("button", { name: "Start New Airdrop" }).click();
+  await page.getByRole("button", { name: "Deploy" }).first().click();
   await expect(page.locator("#currentEpoch")).toHaveText("1");
-  await expect(page.getByRole("button", { name: "Start New Airdrop" })).toBeDisabled();
-  await expect(page.locator("#startRootWarning")).toContainText("already started successfully");
+  await expect(page.locator("#epochListBody")).toContainText("DB + Chain");
+  await page.getByRole("button", { name: "Prepare" }).click();
   await expect(page.locator("#epochListBody")).toContainText("Active");
 });

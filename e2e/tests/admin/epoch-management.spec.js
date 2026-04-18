@@ -10,6 +10,7 @@ test("admin can update an epoch deadline and the update inputs stay synchronized
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
   await startAirdropFromUpload(page, e2eClaimsFile);
+  await page.getByRole("button", { name: "Contract", exact: true }).click();
 
   const nextDeadlineUnix = await page.evaluate(() => {
     const nextDeadline = Math.floor(Date.now() / 1000) + (4 * 60 * 60);
@@ -27,6 +28,7 @@ test("admin can update an epoch deadline and the update inputs stay synchronized
   await expect(page.getByText("Update deadline complete.")).toBeVisible();
   await expect(page.locator("#epochListBody")).toContainText("Active");
 
+  await page.getByRole("button", { name: "Lookups", exact: true }).click();
   await page.locator("#queryEpochInput").fill("1");
   await page.getByRole("button", { name: "Fetch Epoch Data" }).click();
   await expect(page.locator("#epochQueryResult")).toContainText(`"deadline": "${nextDeadlineUnix}"`);
@@ -36,6 +38,7 @@ test("admin rejects an epoch deadline update when the new deadline is already in
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
   await startAirdropFromUpload(page, e2eClaimsFile);
+  await page.getByRole("button", { name: "Contract", exact: true }).click();
 
   const latestBlock = await hardhatChain.rpcCall("eth_getBlockByNumber", ["latest", false]);
   const chainTimestamp = Number.parseInt(latestBlock.timestamp, 16);
@@ -50,6 +53,7 @@ test("admin rejects an epoch deadline update when the new deadline is already in
   await page.getByRole("button", { name: "Update Deadline" }).click();
   await expect(page.getByText("Update deadline: Deadline must be in the future.")).toBeVisible();
 
+  await page.getByRole("button", { name: "Lookups", exact: true }).click();
   await page.locator("#queryEpochInput").fill("1");
   await page.getByRole("button", { name: "Fetch Epoch Data" }).click();
   await expect(page.locator("#epochQueryResult")).not.toContainText(`"deadline": "${pastDeadlineUnix}"`);

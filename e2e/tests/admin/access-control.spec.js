@@ -7,8 +7,9 @@ test("non-owner wallet stays gated from admin controls", async ({ page, mockWall
   await connectViaWalletPicker(page);
 
   await expect(page.locator("#accountRole")).toHaveText("Connected wallet");
-  await expect(page.getByText("This page only unlocks for the current owner address.")).toBeVisible();
+  await expect(page.getByText("This page only unlocks for the current owner or pending owner address.")).toBeVisible();
   await expect(page.locator("#adminShell")).toBeHidden();
+  await expect(page.locator("#pendingOwnerShell")).toBeHidden();
   await expect(page.locator("#ownershipShell")).toBeHidden();
 });
 

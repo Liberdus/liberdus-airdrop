@@ -15,7 +15,8 @@ function normalizeRoundRecord(row) {
   return {
     id: Number(row.id),
     deploymentKey: String(row.deployment_key || "").trim(),
-    epoch: Number(row.epoch),
+    status: String(row.status || "draft").trim(),
+    epoch: row.epoch == null ? null : Number(row.epoch),
     merkleRoot: String(row.merkle_root || "").trim(),
     deadline: Number(row.deadline || 0),
     claimCount: Number(row.claim_count || 0),
@@ -36,11 +37,17 @@ function normalizeClaimRecord(row) {
   if (!row) return null;
 
   return {
+    id: Number(row.claim_id ?? row.id),
     roundId: Number(row.round_id),
     index: String(row.claim_index),
     account: ethers.getAddress(String(row.wallet_address || "").trim()),
     amountRaw: String(row.amount_raw || "0"),
     proof: JSON.parse(String(row.proof_json || "[]")),
+    usernameDisplay: String(row.username_display || "").trim() || null,
+    claimedAt: normalizeIsoDate(row.claimed_at),
+    claimedTxHash: String(row.claimed_tx_hash || "").trim() || null,
+    createdAt: normalizeIsoDate(row.claim_created_at ?? row.created_at),
+    updatedAt: normalizeIsoDate(row.claim_updated_at ?? row.updated_at),
   };
 }
 
@@ -53,22 +60,72 @@ function normalizeDeploymentKey(value) {
   return normalized;
 }
 
+function normalizeClaimInsertRecord(roundId, claim, timestamp) {
+  return {
+    roundId,
+    claimIndex: Number(claim.index),
+    walletAddress: ethers.getAddress(String(claim.account || "").trim()).toLowerCase(),
+    amountRaw: String(claim.amountRaw || "0"),
+    proofJson: JSON.stringify(Array.isArray(claim.proof) ? claim.proof : []),
+    claimedAt: normalizeIsoDate(claim.claimedAt),
+    claimedTxHash: String(claim.claimedTxHash || "").trim().toLowerCase() || null,
+    createdAt: normalizeIsoDate(claim.createdAt, timestamp),
+    updatedAt: normalizeIsoDate(claim.updatedAt, timestamp),
+  };
+}
+
 function createAirdropRoundStore(db) {
+  const claimSelect = `
+    c.id AS claim_id,
+    c.round_id,
+    c.claim_index,
+    c.wallet_address,
+    c.amount_raw,
+    c.proof_json,
+    c.claimed_at,
+    c.claimed_tx_hash,
+    c.created_at AS claim_created_at,
+    c.updated_at AS claim_updated_at,
+    (
+      SELECT xa.username_display
+      FROM x_accounts xa
+      WHERE LOWER(xa.wallet_address) = LOWER(c.wallet_address)
+      ORDER BY datetime(xa.updated_at) DESC, xa.id DESC
+      LIMIT 1
+    ) AS username_display
+  `;
+
   const statements = {
+    getRoundByIdAndDeployment: db.prepare(`
+      SELECT *
+      FROM airdrop_rounds
+      WHERE id = ?
+        AND deployment_key = ?
+      LIMIT 1
+    `),
     getRoundByDeploymentAndEpoch: db.prepare(`
       SELECT *
       FROM airdrop_rounds
       WHERE deployment_key = ?
         AND epoch = ?
+      LIMIT 1
     `),
-    getRoundById: db.prepare(`
+    getMatchingDraft: db.prepare(`
       SELECT *
       FROM airdrop_rounds
-      WHERE id = ?
+      WHERE deployment_key = ?
+        AND status = 'draft'
+        AND LOWER(merkle_root) = LOWER(?)
+        AND deadline = ?
+        AND claim_count = ?
+        AND total_amount_raw = ?
+      ORDER BY datetime(updated_at) DESC, id DESC
+      LIMIT 1
     `),
     insertRound: db.prepare(`
       INSERT INTO airdrop_rounds (
         deployment_key,
+        status,
         epoch,
         merkle_root,
         deadline,
@@ -85,6 +142,7 @@ function createAirdropRoundStore(db) {
         updated_at
       ) VALUES (
         @deploymentKey,
+        @status,
         @epoch,
         @merkleRoot,
         @deadline,
@@ -104,6 +162,8 @@ function createAirdropRoundStore(db) {
     updateRound: db.prepare(`
       UPDATE airdrop_rounds
       SET deployment_key = @deploymentKey,
+          status = @status,
+          epoch = @epoch,
           merkle_root = @merkleRoot,
           deadline = @deadline,
           claim_count = @claimCount,
@@ -129,52 +189,93 @@ function createAirdropRoundStore(db) {
         wallet_address,
         amount_raw,
         proof_json,
-        created_at
+        claimed_at,
+        claimed_tx_hash,
+        created_at,
+        updated_at
       ) VALUES (
         @roundId,
         @claimIndex,
         @walletAddress,
         @amountRaw,
         @proofJson,
-        @createdAt
+        @claimedAt,
+        @claimedTxHash,
+        @createdAt,
+        @updatedAt
       )
     `),
     listRounds: db.prepare(`
       SELECT *
       FROM airdrop_rounds
       WHERE deployment_key = ?
-      ORDER BY epoch DESC, id DESC
+      ORDER BY
+        CASE WHEN status = 'draft' THEN 0 ELSE 1 END,
+        COALESCE(epoch, 0) DESC,
+        datetime(updated_at) DESC,
+        id DESC
     `),
     listWalletRounds: db.prepare(`
       SELECT
         r.*,
-        c.round_id,
-        c.claim_index,
-        c.wallet_address,
-        c.amount_raw,
-        c.proof_json
+        ${claimSelect}
       FROM airdrop_claims c
       INNER JOIN airdrop_rounds r
         ON r.id = c.round_id
       WHERE r.deployment_key = ?
+        AND r.status = 'deployed'
         AND LOWER(c.wallet_address) = LOWER(?)
       ORDER BY r.epoch DESC, r.id DESC
     `),
     getClaimByEpochAndIndex: db.prepare(`
       SELECT
         r.*,
-        c.round_id,
-        c.claim_index,
-        c.wallet_address,
-        c.amount_raw,
-        c.proof_json
+        ${claimSelect}
       FROM airdrop_claims c
       INNER JOIN airdrop_rounds r
         ON r.id = c.round_id
       WHERE r.deployment_key = ?
+        AND r.status = 'deployed'
         AND r.epoch = ?
         AND c.claim_index = ?
       LIMIT 1
+    `),
+    listClaimsByRound: db.prepare(`
+      SELECT
+        r.*,
+        ${claimSelect}
+      FROM airdrop_claims c
+      INNER JOIN airdrop_rounds r
+        ON r.id = c.round_id
+      WHERE r.deployment_key = ?
+        AND r.id = ?
+      ORDER BY c.claim_index ASC, c.id ASC
+    `),
+    getClaimById: db.prepare(`
+      SELECT
+        r.*,
+        ${claimSelect}
+      FROM airdrop_claims c
+      INNER JOIN airdrop_rounds r
+        ON r.id = c.round_id
+      WHERE r.deployment_key = ?
+        AND c.id = ?
+      LIMIT 1
+    `),
+    listClaimsByWallet: db.prepare(`
+      SELECT
+        r.*,
+        ${claimSelect}
+      FROM airdrop_claims c
+      INNER JOIN airdrop_rounds r
+        ON r.id = c.round_id
+      WHERE r.deployment_key = ?
+        AND LOWER(c.wallet_address) = LOWER(?)
+      ORDER BY
+        CASE WHEN r.status = 'draft' THEN 0 ELSE 1 END,
+        COALESCE(r.epoch, 0) DESC,
+        c.claim_index ASC,
+        c.id ASC
     `),
     getStats: db.prepare(`
       SELECT
@@ -191,26 +292,45 @@ function createAirdropRoundStore(db) {
     `),
   };
 
-  const upsertRound = db.transaction((round) => {
+  function replaceClaimsForRound(roundId, claims, timestamp) {
+    statements.deleteClaimsByRoundId.run(roundId);
+    for (const claim of claims) {
+      statements.insertClaim.run(normalizeClaimInsertRecord(roundId, claim, timestamp));
+    }
+  }
+
+  const saveDraftRound = db.transaction((round) => {
     const deploymentKey = normalizeDeploymentKey(round.deploymentKey);
-    const existing = normalizeRoundRecord(
-      statements.getRoundByDeploymentAndEpoch.get(deploymentKey, round.epoch),
-    );
     const updatedAt = normalizeIsoDate(round.updatedAt, new Date().toISOString());
+    const normalizedMerkleRoot = String(round.merkleRoot || "").trim().toLowerCase();
+    const normalizedDeadline = Number(round.deadline || 0);
+    const normalizedClaimCount = Number(round.claimCount || 0);
+    const normalizedTotalAmountRaw = String(round.totalAmountRaw || "0");
+    const existing = normalizeRoundRecord(
+      statements.getMatchingDraft.get(
+        deploymentKey,
+        normalizedMerkleRoot,
+        normalizedDeadline,
+        normalizedClaimCount,
+        normalizedTotalAmountRaw,
+      ),
+    );
+
     const baseRecord = {
       deploymentKey,
-      epoch: Number(round.epoch),
-      merkleRoot: String(round.merkleRoot || "").trim().toLowerCase(),
-      deadline: Number(round.deadline || 0),
-      claimCount: Number(round.claimCount || 0),
-      totalAmountRaw: String(round.totalAmountRaw || "0"),
+      status: "draft",
+      epoch: null,
+      merkleRoot: normalizedMerkleRoot,
+      deadline: normalizedDeadline,
+      claimCount: normalizedClaimCount,
+      totalAmountRaw: normalizedTotalAmountRaw,
       decimals: Number(round.decimals || 18),
       chainId: Number(round.chainId || 0),
       contractAddress: ethers.getAddress(String(round.contractAddress || "").trim()).toLowerCase(),
-      sourceKind: String(round.sourceKind || "manual").trim(),
-      startTxHash: String(round.startTxHash || "").trim().toLowerCase() || null,
-      startBlockNumber: round.startBlockNumber == null ? null : Number(round.startBlockNumber),
-      startBlockHash: String(round.startBlockHash || "").trim().toLowerCase() || null,
+      sourceKind: String(round.sourceKind || "admin-draft").trim(),
+      startTxHash: null,
+      startBlockNumber: null,
+      startBlockHash: null,
       createdAt: existing?.createdAt || updatedAt,
       updatedAt,
     };
@@ -227,29 +347,69 @@ function createAirdropRoundStore(db) {
       roundId = existing.id;
     }
 
-    statements.deleteClaimsByRoundId.run(roundId);
-    for (const claim of round.claims) {
-      statements.insertClaim.run({
-        roundId,
-        claimIndex: Number(claim.index),
-        walletAddress: ethers.getAddress(String(claim.account || "").trim()).toLowerCase(),
-        amountRaw: String(claim.amountRaw || "0"),
-        proofJson: JSON.stringify(Array.isArray(claim.proof) ? claim.proof : []),
-        createdAt: updatedAt,
-      });
+    replaceClaimsForRound(roundId, round.claims, updatedAt);
+    return normalizeRoundRecord(statements.getRoundByIdAndDeployment.get(roundId, deploymentKey));
+  });
+
+  const finalizeRoundDeployment = db.transaction((roundId, deploymentKey, deployment) => {
+    const existing = normalizeRoundRecord(
+      statements.getRoundByIdAndDeployment.get(Number(roundId), normalizeDeploymentKey(deploymentKey)),
+    );
+
+    if (!existing) {
+      throw new Error("Stored airdrop round was not found.");
     }
 
-    return normalizeRoundRecord(statements.getRoundById.get(roundId));
+    const normalizedEpoch = Number(deployment.epoch);
+    const conflictingRound = normalizeRoundRecord(
+      statements.getRoundByDeploymentAndEpoch.get(existing.deploymentKey, normalizedEpoch),
+    );
+    if (conflictingRound && conflictingRound.id !== existing.id) {
+      throw new Error(`Epoch ${normalizedEpoch} is already linked to another stored round.`);
+    }
+
+    const updatedAt = normalizeIsoDate(deployment.updatedAt, new Date().toISOString());
+    statements.updateRound.run({
+      id: existing.id,
+      deploymentKey: existing.deploymentKey,
+      status: "deployed",
+      epoch: normalizedEpoch,
+      merkleRoot: String(deployment.merkleRoot || existing.merkleRoot).trim().toLowerCase(),
+      deadline: Number(deployment.deadline || existing.deadline),
+      claimCount: existing.claimCount,
+      totalAmountRaw: existing.totalAmountRaw,
+      decimals: existing.decimals,
+      chainId: Number(deployment.chainId || existing.chainId || 0),
+      contractAddress: ethers.getAddress(String(deployment.contractAddress || existing.contractAddress).trim()).toLowerCase(),
+      sourceKind: String(deployment.sourceKind || existing.sourceKind || "admin-draft").trim(),
+      startTxHash: String(deployment.startTxHash || "").trim().toLowerCase() || null,
+      startBlockNumber: deployment.startBlockNumber == null ? null : Number(deployment.startBlockNumber),
+      startBlockHash: String(deployment.startBlockHash || "").trim().toLowerCase() || null,
+      createdAt: existing.createdAt,
+      updatedAt,
+    });
+
+    return normalizeRoundRecord(statements.getRoundByIdAndDeployment.get(existing.id, existing.deploymentKey));
   });
 
   return {
-    upsertRound(round) {
-      return upsertRound(round);
+    saveDraftRound(round) {
+      return saveDraftRound(round);
+    },
+
+    finalizeRoundDeployment(roundId, deploymentKey, deployment) {
+      return finalizeRoundDeployment(roundId, deploymentKey, deployment);
     },
 
     listRounds(deploymentKey) {
       const normalizedDeploymentKey = normalizeDeploymentKey(deploymentKey);
       return statements.listRounds.all(normalizedDeploymentKey).map((row) => normalizeRoundRecord(row));
+    },
+
+    getRoundById(roundId, deploymentKey) {
+      return normalizeRoundRecord(
+        statements.getRoundByIdAndDeployment.get(Number(roundId), normalizeDeploymentKey(deploymentKey)),
+      );
     },
 
     getWalletRounds(walletAddress, deploymentKey) {
@@ -279,6 +439,35 @@ function createAirdropRoundStore(db) {
         ...normalizeRoundRecord(row),
         entry: normalizeClaimRecord(row),
       };
+    },
+
+    listClaimsByRound(roundId, deploymentKey) {
+      const normalizedDeploymentKey = normalizeDeploymentKey(deploymentKey);
+      return statements.listClaimsByRound.all(normalizedDeploymentKey, Number(roundId)).map((row) => ({
+        round: normalizeRoundRecord(row),
+        entry: normalizeClaimRecord(row),
+      }));
+    },
+
+    getClaimById(claimId, deploymentKey) {
+      const normalizedDeploymentKey = normalizeDeploymentKey(deploymentKey);
+      const row = statements.getClaimById.get(normalizedDeploymentKey, Number(claimId));
+      if (!row) {
+        return null;
+      }
+
+      return {
+        round: normalizeRoundRecord(row),
+        entry: normalizeClaimRecord(row),
+      };
+    },
+
+    findClaimsByWallet(walletAddress, deploymentKey) {
+      const normalizedDeploymentKey = normalizeDeploymentKey(deploymentKey);
+      return statements.listClaimsByWallet.all(normalizedDeploymentKey, walletAddress).map((row) => ({
+        round: normalizeRoundRecord(row),
+        entry: normalizeClaimRecord(row),
+      }));
     },
 
     getStats(deploymentKey = null) {

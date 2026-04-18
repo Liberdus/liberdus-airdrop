@@ -39,10 +39,19 @@ async function startAirdropFromUpload(page, claimsFile, { deadlineSelector = "#s
 
   await page.locator("#uploadClaimsFileInput").setInputFiles(claimsFile);
   await setFutureDeadline(page, deadlineSelector);
-  await page.getByRole("button", { name: "Fund Contract" }).click();
+  await page.getByRole("button", { name: "Save Round to DB" }).click();
+  await page.getByRole("button", { name: "Fund Total" }).first().click();
   await page.getByText("Fund airdrop complete.").waitFor();
-  await page.getByRole("button", { name: "Start New Airdrop" }).click();
-  await expect(page.locator("#currentEpoch")).toHaveText(String(currentEpoch + 1));
+  await page.getByRole("button", { name: "Deploy" }).first().click();
+  await page.getByText(`Draft deployed as epoch ${currentEpoch + 1}.`).waitFor();
+  try {
+    await expect(page.locator("#currentEpoch")).toHaveText(String(currentEpoch + 1), { timeout: 10000 });
+  } catch {
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await expect(page.locator("#currentEpoch")).toHaveText(String(currentEpoch + 1));
+  }
+  await expect(page.locator("#epochListBody")).toContainText("DB + Chain");
+  await page.getByRole("button", { name: "Prepare" }).click();
 }
 
 module.exports = {
