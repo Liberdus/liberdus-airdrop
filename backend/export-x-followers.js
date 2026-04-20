@@ -71,7 +71,8 @@ function usage() {
       "  - reads X-BEARER-TOKEN from .env",
       `  - requests all app-only user fields X exposes for public lookups (${USER_FIELDS.length} fields)`,
       "  - checkpoints progress after every page to a .partial.json file",
-      "  - refuses to overwrite an existing completed snapshot unless --force is passed",
+      "  - writes completed exports to a timestamped filename so older snapshots are preserved",
+      "  - uses --force only to discard an existing partial checkpoint and start over",
     ].join("\n"),
   );
 }
@@ -137,6 +138,36 @@ function resolvePaths(outputPath) {
     outputPath: resolvedOutputPath,
     partialPath,
   };
+}
+
+function formatTimestampForFilename(isoTimestamp) {
+  return isoTimestamp.replace(/:/g, ".");
+}
+
+function buildCompletedOutputPath(outputTemplatePath, completedAt) {
+  const parsed = path.parse(outputTemplatePath);
+  const extension = parsed.ext || ".json";
+  const formattedTimestamp = formatTimestampForFilename(completedAt);
+  const baseName = parsed.name || "followers";
+
+  return path.join(parsed.dir, `${baseName}-${formattedTimestamp}${extension}`);
+}
+
+function ensureUniqueFilePath(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return filePath;
+  }
+
+  const parsed = path.parse(filePath);
+  let attempt = 2;
+
+  while (true) {
+    const candidate = path.join(parsed.dir, `${parsed.name}-${attempt}${parsed.ext}`);
+    if (!fs.existsSync(candidate)) {
+      return candidate;
+    }
+    attempt += 1;
+  }
 }
 
 function loadBearerToken(repoRoot) {
@@ -286,6 +317,7 @@ function createInitialState(options, sourceUser) {
     request: {
       apiBaseUrl: API_BASE_URL,
       maxResults: options.maxResults,
+      outputTemplatePath: options.outputPath,
       userFields: USER_FIELDS,
       omittedUserFields: USER_CONTEXT_ONLY_USER_FIELDS,
     },
@@ -307,15 +339,7 @@ function createInitialState(options, sourceUser) {
 }
 
 function loadState(options, paths) {
-  if (fs.existsSync(paths.outputPath) && !options.force) {
-    return {
-      state: null,
-      skipReason: `Completed snapshot already exists at ${paths.outputPath}. Re-run with --force to fetch again.`,
-    };
-  }
-
   if (options.force) {
-    removeFileIfExists(paths.outputPath);
     removeFileIfExists(paths.partialPath);
   }
 
@@ -336,6 +360,12 @@ function loadState(options, paths) {
   if (state.request?.maxResults !== options.maxResults) {
     throw new Error(
       `Checkpoint max-results mismatch: expected ${options.maxResults}, found ${state.request?.maxResults}. Use --force to start fresh.`,
+    );
+  }
+
+  if (state.request?.outputTemplatePath !== options.outputPath) {
+    throw new Error(
+      `Checkpoint output path mismatch: expected ${options.outputPath}, found ${state.request?.outputTemplatePath}. Use --force to start fresh.`,
     );
   }
 
@@ -451,11 +481,12 @@ async function exportFollowers(options, paths, bearerToken) {
   state.completedAt = new Date().toISOString();
   state.updatedAt = state.completedAt;
   state.resume.nextToken = null;
+  state.outputFile = ensureUniqueFilePath(buildCompletedOutputPath(paths.outputPath, state.completedAt));
 
-  writeJson(paths.outputPath, state);
+  writeJson(state.outputFile, state);
   removeFileIfExists(paths.partialPath);
 
-  console.log(`Saved ${state.followers.length} followers for @${state.username} to ${paths.outputPath}`);
+  console.log(`Saved ${state.followers.length} followers for @${state.username} to ${state.outputFile}`);
 }
 
 async function main() {
