@@ -1,5 +1,15 @@
+const fs = require("node:fs");
+const path = require("node:path");
+
 const { expect, test } = require("../../fixtures/testWithMockWallet");
 const { connectViaWalletPicker, setFutureDeadline } = require("../helpers");
+
+function writeFixtureFile(testInfo, name, content) {
+  const filePath = testInfo.outputPath(name);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content);
+  return filePath;
+}
 
 test("admin can upload an existing claims file and gets a duplicate-root warning on re-upload", async ({ page, e2eClaimsFile }) => {
   await page.goto("admin.html");
@@ -26,4 +36,34 @@ test("admin can upload an existing claims file and gets a duplicate-root warning
   await page.locator("#uploadClaimsFileInput").setInputFiles(e2eClaimsFile);
   await expect(page.getByText("Claims file loaded.")).toBeVisible();
   await expect(page.locator("#startRootWarning")).toContainText("already exists on chain");
+});
+
+test("admin can save a large uploaded round to the backend", async ({ page }, testInfo) => {
+  const claimCount = 600;
+  const claimsFile = writeFixtureFile(
+    testInfo,
+    "large-round.claims.json",
+    `${JSON.stringify(
+      Array.from({ length: claimCount }, (_, index) => ({
+        index,
+        account: `0x${(index + 1).toString(16).padStart(40, "0")}`,
+        amount: "1",
+      })),
+      null,
+      2,
+    )}\n`,
+  );
+
+  await page.goto("admin.html");
+  await connectViaWalletPicker(page);
+
+  await page.locator("#uploadClaimsFileInput").setInputFiles(claimsFile);
+  await expect(page.getByText("Claims file loaded.")).toBeVisible();
+  await expect(page.locator("#uploadedClaimCount")).toHaveText(`${claimCount} wallets`);
+
+  await setFutureDeadline(page, "#startDeadlineInput");
+  await page.getByRole("button", { name: "Save Round to DB" }).click();
+
+  await expect(page.locator("#selectedRoundLabel")).toContainText("Draft");
+  await expect(page.locator("#uploadedClaimCount")).toHaveText(`${claimCount} wallets`);
 });

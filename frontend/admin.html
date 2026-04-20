@@ -172,12 +172,17 @@
                   <span>Download File Name</span>
                   <input id="builderFileNameInput" type="text" placeholder="round-1.claims.json">
                 </label>
+                <label>
+                  <span>Amount For Every Wallet</span>
+                  <input id="builderUniformAmountInput" type="text" inputmode="decimal" placeholder="100">
+                </label>
                 <div class="full-width button-row">
+                  <button id="loadWalletAccountsButton" type="button" class="secondary">Use All Linked Wallets</button>
                   <button id="loadBuilderButton" type="button">Use Built Claims</button>
                   <button id="downloadBuilderButton" type="button" class="secondary">Download JSON</button>
                   <button id="clearBuilderButton" type="button" class="ghost">Clear Table</button>
                 </div>
-                <p class="hint full-width">Indexes are assigned automatically when the JSON is generated. Enter token amounts in human units.</p>
+                <p class="hint full-width">Indexes are assigned automatically when the JSON is generated. Enter token amounts in human units. The linked-wallet shortcut uses every account with a saved wallet, then skips invalid or duplicate wallet values.</p>
               </form>
 
               <div class="detail-list builder-summary-list">

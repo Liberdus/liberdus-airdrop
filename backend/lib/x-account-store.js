@@ -542,6 +542,7 @@ function createAccountStore(db) {
     const requestedPage = Number.parseInt(String(options.page || "1").trim(), 10);
     const requestedPageSize = Number.parseInt(String(options.pageSize || "50").trim(), 10);
     const search = String(options.search || options.query || "").trim().toLowerCase();
+    const walletOnly = parseBoolean(options.walletOnly || options.hasWallet);
 
     return {
       page: Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
@@ -549,28 +550,35 @@ function createAccountStore(db) {
         ? Math.min(Math.max(requestedPageSize, 1), 200)
         : 50,
       search,
+      walletOnly,
     };
   }
 
   function buildAccountSearchState(options = {}) {
     const normalized = normalizeAccountQueryOptions(options);
     const hasSearch = Boolean(normalized.search);
-    const sqlParams = hasSearch
-      ? {
-        search: `%${normalized.search}%`,
-      }
-      : {};
+    const filters = [];
+    const sqlParams = {};
+
+    if (hasSearch) {
+      sqlParams.search = `%${normalized.search}%`;
+      filters.push(`
+        (
+          LOWER(username_display) LIKE @search
+          OR LOWER(COALESCE(x_user_id, '')) LIKE @search
+          OR LOWER(COALESCE(wallet_address, '')) LIKE @search
+        )
+      `);
+    }
+
+    if (normalized.walletOnly) {
+      filters.push(`TRIM(COALESCE(wallet_address, '')) <> ''`);
+    }
 
     return {
       ...normalized,
       sqlParams,
-      whereClause: hasSearch
-        ? `
-          WHERE LOWER(username_display) LIKE @search
-             OR LOWER(COALESCE(x_user_id, '')) LIKE @search
-             OR LOWER(COALESCE(wallet_address, '')) LIKE @search
-        `
-        : "",
+      whereClause: filters.length ? `WHERE ${filters.join("\n          AND ")}` : "",
     };
   }
 
