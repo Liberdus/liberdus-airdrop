@@ -53,6 +53,12 @@ Because the checkouts are separate, the default `data/liberdus.sqlite` path is a
 
 ## 1. Install
 
+If this server uses Node through `nvm`, make sure the Node 20.19.5 bin directory is on `PATH` before running `npm`, `npx`, or `pm2` commands in the SSH session:
+
+```bash
+export PATH=/home/liberdus/.nvm/versions/node/v20.19.5/bin:$PATH
+```
+
 Run this once in each directory:
 
 ```bash
@@ -348,6 +354,7 @@ Remember:
 For each environment:
 
 ```bash
+export PATH=/home/liberdus/.nvm/versions/node/v20.19.5/bin:$PATH
 git pull
 npm ci
 cp frontend/config.prod.json frontend/config.json   # or config.test.json
