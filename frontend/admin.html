@@ -145,6 +145,7 @@
             <button type="button" class="admin-tab-button" data-admin-tab="prepare" aria-selected="true">Prepare</button>
             <button type="button" class="admin-tab-button" data-admin-tab="rounds" aria-selected="false">Rounds</button>
             <button type="button" class="admin-tab-button" data-admin-tab="contract" aria-selected="false">Contract</button>
+            <button type="button" class="admin-tab-button" data-admin-tab="accounts" aria-selected="false">Accounts</button>
             <button type="button" class="admin-tab-button" data-admin-tab="lookups" aria-selected="false">Lookups</button>
           </div>
         </section>
@@ -452,6 +453,211 @@
                 <p class="hint">Only the pending owner can complete the second step.</p>
                 <button id="acceptOwnershipButton" type="submit">Accept Ownership</button>
               </form>
+            </div>
+          </section>
+        </div>
+
+        <div class="admin-tab-panel" data-admin-panel="accounts" hidden>
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Follower Accounts</h2>
+                <p class="hint">Browse the full account table, import the combined CSV used by the backend importer, and save one-off rows for testing.</p>
+              </div>
+            </div>
+
+            <div class="detail-list admin-summary-list">
+              <article class="detail-item">
+                <h3>Accounts</h3>
+                <p id="managementAccountCount">-</p>
+              </article>
+              <article class="detail-item">
+                <h3>Followers</h3>
+                <p id="managementFollowerCount">-</p>
+              </article>
+              <article class="detail-item">
+                <h3>Need Recovery</h3>
+                <p id="managementRecoveryCandidateCount">-</p>
+              </article>
+              <article class="detail-item">
+                <h3>Submissions</h3>
+                <p id="managementSubmissionCount">-</p>
+              </article>
+              <article class="detail-item">
+                <h3>Latest Snapshot</h3>
+                <p id="managementLatestSnapshot">-</p>
+              </article>
+            </div>
+
+            <div class="card-grid management-actions-grid">
+              <form id="accountsImportForm" class="card-form" autocomplete="off">
+                <h3>Import Accounts CSV</h3>
+                <p class="hint">Upload the same combined CSV accepted by <code>npm run accounts:import</code>.</p>
+                <label>
+                  <span>Combined Accounts CSV</span>
+                  <input id="accountsImportFileInput" type="file" accept=".csv,text/csv">
+                </label>
+                <p class="hint">Template: <code>x_username,wallet_address,x_user_id,is_follower,needs_recovery,snapshot_history_json</code></p>
+                <div class="button-row">
+                  <button type="submit">Upload Accounts</button>
+                  <button id="downloadAccountsTemplateButton" type="button" class="ghost">Download Template</button>
+                </div>
+              </form>
+
+              <form id="singleAccountForm" class="card-form" autocomplete="off">
+                <h3>Add Individual Account</h3>
+                <label>
+                  <span>X Username</span>
+                  <input id="singleAccountUsernameInput" type="text" placeholder="@example">
+                </label>
+                <label>
+                  <span>X User ID</span>
+                  <input id="singleAccountUserIdInput" type="text" placeholder="Optional">
+                </label>
+                <label>
+                  <span>Wallet Address</span>
+                  <input id="singleAccountWalletInput" type="text" placeholder="0x...">
+                </label>
+                <div class="checkbox-row">
+                  <label class="checkbox-field">
+                    <input id="singleAccountIsFollowerInput" type="checkbox">
+                    <span>Mark as follower</span>
+                  </label>
+                  <label class="checkbox-field">
+                    <input id="singleAccountNeedsRecoveryInput" type="checkbox">
+                    <span>Needs recovery</span>
+                  </label>
+                </div>
+                <p class="hint">If you mark a new row as a follower, the backend stamps the current time so it behaves like a real snapshot row.</p>
+                <button type="submit">Save Account</button>
+              </form>
+            </div>
+
+            <div class="management-toolbar">
+              <form id="accountsQueryForm" class="management-filter-form" autocomplete="off">
+                <label class="management-filter-field">
+                  <span>Search</span>
+                  <input id="accountsSearchInput" type="text" placeholder="Username, X user ID, or wallet">
+                </label>
+                <label class="management-page-size-field">
+                  <span>Rows</span>
+                  <select id="accountsPageSizeSelect">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                  </select>
+                </label>
+                <div class="button-row">
+                  <button type="submit">Apply</button>
+                  <button id="accountsClearSearchButton" type="button" class="ghost">Clear</button>
+                </div>
+              </form>
+
+              <div class="management-pagination">
+                <p id="accountsPaginationLabel" class="hint">Open this tab to load accounts.</p>
+                <div class="button-row">
+                  <button id="accountsPreviousPageButton" type="button" class="ghost">Previous</button>
+                  <button id="accountsNextPageButton" type="button" class="ghost">Next</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Username</th>
+                    <th>X User ID</th>
+                    <th>Wallet</th>
+                    <th>Source</th>
+                    <th>Follower</th>
+                    <th>Recovery</th>
+                    <th>Snapshots</th>
+                    <th>Latest Activity</th>
+                  </tr>
+                </thead>
+                <tbody id="accountsTableBody">
+                  <tr><td colspan="8" class="empty-row">Open this tab to load accounts.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="frame">
+            <div class="panel-title-row">
+              <div>
+                <h2>Recovery Submissions</h2>
+                <p class="hint">Review every recovery response, import legacy <code>recovery-links.json</code> files, and export the full response set for backup or downstream processing.</p>
+              </div>
+            </div>
+
+            <div class="card-grid management-actions-grid">
+              <form id="recoveryImportForm" class="card-form" autocomplete="off">
+                <h3>Import Legacy JSON</h3>
+                <label>
+                  <span>Recovery Links JSON</span>
+                  <input id="recoveryImportFileInput" type="file" accept=".json,application/json">
+                </label>
+                <p class="hint">Expected shape: the legacy <code>recovery-links.json</code> file with a top-level <code>records</code> array.</p>
+                <button type="submit">Upload Recovery JSON</button>
+              </form>
+
+              <div class="card-form">
+                <h3>Export Responses</h3>
+                <p class="hint">Export the full recovery submission dataset as JSON or CSV. Both exports include signed payload data.</p>
+                <div class="button-row">
+                  <button id="exportRecoveryJsonButton" type="button">Export JSON</button>
+                  <button id="exportRecoveryCsvButton" type="button" class="secondary">Export CSV</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="management-toolbar">
+              <form id="recoveryQueryForm" class="management-filter-form" autocomplete="off">
+                <label class="management-filter-field">
+                  <span>Search</span>
+                  <input id="recoverySearchInput" type="text" placeholder="Username, X user ID, or wallet">
+                </label>
+                <label class="management-page-size-field">
+                  <span>Rows</span>
+                  <select id="recoveryPageSizeSelect">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                  </select>
+                </label>
+                <div class="button-row">
+                  <button type="submit">Apply</button>
+                  <button id="recoveryClearSearchButton" type="button" class="ghost">Clear</button>
+                </div>
+              </form>
+
+              <div class="management-pagination">
+                <p id="recoveryPaginationLabel" class="hint">Open this tab to load recovery submissions.</p>
+                <div class="button-row">
+                  <button id="recoveryPreviousPageButton" type="button" class="ghost">Previous</button>
+                  <button id="recoveryNextPageButton" type="button" class="ghost">Next</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Submitted</th>
+                    <th>Username</th>
+                    <th>X User ID</th>
+                    <th>Wallet</th>
+                    <th>Known Follower</th>
+                    <th>Recovery Candidate</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="recoverySubmissionsBody">
+                  <tr><td colspan="7" class="empty-row">Open this tab to load recovery submissions.</td></tr>
+                </tbody>
+              </table>
             </div>
           </section>
         </div>

@@ -147,10 +147,13 @@ body::after {
 .toast-message {
   margin: 0;
   flex: 1 1 auto;
+  min-width: 0;
   color: var(--text);
   font-family: var(--mono);
   font-size: 0.9rem;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .toast-close {
@@ -1580,7 +1583,7 @@ code,
 
 .admin-tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 1px;
   padding: 1px;
   border: 1px solid rgba(251, 175, 64, 0.18);
@@ -1631,6 +1634,121 @@ code,
 .admin-tab-button.is-active:focus-visible {
   background: linear-gradient(135deg, #ffd487 0%, #fbb040 42%, #ee9b26 100%);
   box-shadow: inset 0 0 0 1px rgba(251, 175, 64, 0.18);
+}
+
+.management-actions-grid {
+  margin: 22px 0;
+}
+
+.management-actions-grid > * {
+  min-width: 0;
+}
+
+.management-toolbar {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.management-filter-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.management-filter-field,
+.management-page-size-field {
+  display: grid;
+  gap: 8px;
+}
+
+.management-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.checkbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.checkbox-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(251, 175, 64, 0.14);
+  border-radius: 16px;
+  background: rgba(8, 21, 60, 0.7);
+}
+
+.checkbox-field input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.checkbox-field span {
+  color: #f5f8ff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.management-meta-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.management-meta-stack span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.table-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  padding: 5px 10px;
+  border: 1px solid rgba(251, 175, 64, 0.16);
+  border-radius: 999px;
+  background: rgba(251, 175, 64, 0.08);
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.table-flag[data-tone="positive"] {
+  border-color: rgba(110, 224, 140, 0.24);
+  background: rgba(32, 119, 57, 0.24);
+  color: #c7ffd4;
+}
+
+.table-flag[data-tone="muted"] {
+  border-color: rgba(126, 147, 193, 0.16);
+  background: rgba(65, 82, 122, 0.24);
+  color: #d5def6;
+}
+
+.table-address-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.table-address-link:hover code,
+.table-address-link:focus-visible code {
+  color: #ffe8b9;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
 }
 
 .full-width {
@@ -1716,10 +1834,17 @@ select {
   padding: 18px;
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 .card-form h3 {
   color: var(--text);
+}
+
+.management-actions-grid .hint code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .subsection-header {
@@ -2317,6 +2442,19 @@ code {
   .button-row button,
   .button-stack button {
     width: 100%;
+  }
+
+  .management-filter-form {
+    grid-template-columns: 1fr;
+  }
+
+  .management-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .checkbox-row {
+    flex-direction: column;
   }
 
   .site-nav {

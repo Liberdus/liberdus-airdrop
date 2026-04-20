@@ -37,6 +37,16 @@ import {
   deploySavedAirdropRound,
   requestAirdropSaveChallenge,
 } from "../shared/claims.js";
+import {
+  requestAdminAccessChallenge,
+  completeAdminAccess,
+  fetchAdminAccounts,
+  importAdminAccounts,
+  saveAdminAccount,
+  fetchAdminRecoverySubmissions,
+  importAdminRecoverySubmissions,
+  exportAdminRecoverySubmissions,
+} from "../shared/admin-data.js";
 import { buildClaimRound } from "../shared/merkle.js";
 
 const runtime = {
@@ -78,6 +88,37 @@ const runtime = {
   tokenSymbol: "LIB",
   chainTimestamp: 0,
   activeAdminTab: "prepare",
+  adminAccessToken: "",
+  adminAccessExpiresAt: 0,
+  adminAccessPromise: null,
+  managementSummary: {
+    accountCount: 0,
+    followerCount: 0,
+    recoveryCandidateCount: 0,
+    latestSnapshotCapturedAt: null,
+    recoverySubmissionCount: 0,
+  },
+  accountsRows: [],
+  accountsPagination: {
+    page: 1,
+    pageSize: 50,
+    total: 0,
+    totalPages: 0,
+    hasNextPage: false,
+    hasPreviousPage: false,
+  },
+  accountsSearch: "",
+  recoverySubmissionRows: [],
+  recoveryPagination: {
+    page: 1,
+    pageSize: 50,
+    total: 0,
+    totalPages: 0,
+    hasNextPage: false,
+    hasPreviousPage: false,
+  },
+  recoverySearch: "",
+  hasLoadedAccountsTab: false,
   isConnectingWallet: false,
   noticeTimerId: null,
 };
@@ -171,6 +212,40 @@ const els = {
   claimStatusForm: document.getElementById("claimStatusForm"),
   claimLookupInput: document.getElementById("claimLookupInput"),
   claimLookupBody: document.getElementById("claimLookupBody"),
+  managementAccountCount: document.getElementById("managementAccountCount"),
+  managementFollowerCount: document.getElementById("managementFollowerCount"),
+  managementRecoveryCandidateCount: document.getElementById("managementRecoveryCandidateCount"),
+  managementSubmissionCount: document.getElementById("managementSubmissionCount"),
+  managementLatestSnapshot: document.getElementById("managementLatestSnapshot"),
+  accountsImportForm: document.getElementById("accountsImportForm"),
+  accountsImportFileInput: document.getElementById("accountsImportFileInput"),
+  downloadAccountsTemplateButton: document.getElementById("downloadAccountsTemplateButton"),
+  singleAccountForm: document.getElementById("singleAccountForm"),
+  singleAccountUsernameInput: document.getElementById("singleAccountUsernameInput"),
+  singleAccountUserIdInput: document.getElementById("singleAccountUserIdInput"),
+  singleAccountWalletInput: document.getElementById("singleAccountWalletInput"),
+  singleAccountIsFollowerInput: document.getElementById("singleAccountIsFollowerInput"),
+  singleAccountNeedsRecoveryInput: document.getElementById("singleAccountNeedsRecoveryInput"),
+  accountsQueryForm: document.getElementById("accountsQueryForm"),
+  accountsSearchInput: document.getElementById("accountsSearchInput"),
+  accountsPageSizeSelect: document.getElementById("accountsPageSizeSelect"),
+  accountsClearSearchButton: document.getElementById("accountsClearSearchButton"),
+  accountsPaginationLabel: document.getElementById("accountsPaginationLabel"),
+  accountsPreviousPageButton: document.getElementById("accountsPreviousPageButton"),
+  accountsNextPageButton: document.getElementById("accountsNextPageButton"),
+  accountsTableBody: document.getElementById("accountsTableBody"),
+  recoveryImportForm: document.getElementById("recoveryImportForm"),
+  recoveryImportFileInput: document.getElementById("recoveryImportFileInput"),
+  exportRecoveryJsonButton: document.getElementById("exportRecoveryJsonButton"),
+  exportRecoveryCsvButton: document.getElementById("exportRecoveryCsvButton"),
+  recoveryQueryForm: document.getElementById("recoveryQueryForm"),
+  recoverySearchInput: document.getElementById("recoverySearchInput"),
+  recoveryPageSizeSelect: document.getElementById("recoveryPageSizeSelect"),
+  recoveryClearSearchButton: document.getElementById("recoveryClearSearchButton"),
+  recoveryPaginationLabel: document.getElementById("recoveryPaginationLabel"),
+  recoveryPreviousPageButton: document.getElementById("recoveryPreviousPageButton"),
+  recoveryNextPageButton: document.getElementById("recoveryNextPageButton"),
+  recoverySubmissionsBody: document.getElementById("recoverySubmissionsBody"),
   adminToast: document.getElementById("adminToast"),
   adminToastMessage: document.getElementById("adminToastMessage"),
   adminToastClose: document.getElementById("adminToastClose"),
@@ -219,6 +294,10 @@ function clearMessage() {
 const logger = { log: setMessage, clear: clearMessage };
 const reportError = createErrorReporter(logger.log, () => runtime);
 let pageInitPromise = Promise.resolve();
+const ADMIN_ACCOUNTS_TEMPLATE_CSV = [
+  "x_username,wallet_address,x_user_id,is_follower,needs_recovery,snapshot_history_json",
+  "example_user,0x0000000000000000000000000000000000000001,123456789,true,false,\"[\"\"2026-04-15T17:38:57.616Z\"\", \"\"2026-04-20T15:59:46.289Z\"\"]\"",
+].join("\n");
 
 function updateToastOffset() {
   if (!els.adminHeader) return;
@@ -251,6 +330,143 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function formatManagementDateTime(value) {
+  if (!value) return "-";
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+
+  return parsed.toLocaleString();
+}
+
+function createFlagBadge(value, { positiveLabel = "Yes", negativeLabel = "No" } = {}) {
+  const label = value ? positiveLabel : negativeLabel;
+  const tone = value ? "positive" : "muted";
+  return `<span class="table-flag" data-tone="${tone}">${escapeHtml(label)}</span>`;
+}
+
+function formatPaginationLabel(pagination, singularLabel, pluralLabel) {
+  const total = Number(pagination?.total || 0);
+  if (!total) {
+    return `0 ${pluralLabel}`;
+  }
+
+  const page = Number(pagination?.page || 1);
+  const totalPages = Number(pagination?.totalPages || 1);
+  const pageSize = Number(pagination?.pageSize || total);
+  const start = ((page - 1) * pageSize) + 1;
+  const end = Math.min(start + pageSize - 1, total);
+  const itemLabel = total === 1 ? singularLabel : pluralLabel;
+  return `Showing ${start}-${end} of ${total} ${itemLabel} (page ${page}/${Math.max(totalPages, 1)})`;
+}
+
+function downloadTextFile(fileName, content, contentType) {
+  const blob = new Blob([content], { type: contentType });
+  const downloadUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(downloadUrl);
+}
+
+function getExplorerAddressUrl(address) {
+  const normalizedAddress = normalizeAddress(address);
+  const explorerBaseUrl = String(runtime.config.explorerBaseUrl || "").trim().replace(/\/+$/u, "");
+
+  if (!normalizedAddress || !explorerBaseUrl) {
+    return "";
+  }
+
+  return `${explorerBaseUrl}/address/${normalizedAddress}`;
+}
+
+function renderExplorerAddress(address) {
+  const normalizedAddress = normalizeAddress(address);
+  if (!normalizedAddress) {
+    return "-";
+  }
+
+  const explorerUrl = getExplorerAddressUrl(normalizedAddress);
+  const label = formatAddressShort(normalizedAddress);
+  const codeLabel = `<code title="${normalizedAddress}">${label}</code>`;
+
+  if (!explorerUrl) {
+    return codeLabel;
+  }
+
+  return `<a class="table-address-link" href="${explorerUrl}" target="_blank" rel="noreferrer noopener">${codeLabel}</a>`;
+}
+
+function resetAdminAccess() {
+  runtime.adminAccessToken = "";
+  runtime.adminAccessExpiresAt = 0;
+  runtime.adminAccessPromise = null;
+}
+
+function isAdminAccessError(error) {
+  const message = String(error?.message || "");
+  return /admin access|current contract owner/i.test(message);
+}
+
+async function ensureAdminAccess() {
+  if (!isOwner()) {
+    throw new Error("Only the current owner can access follower management.");
+  }
+
+  const tokenIsFresh = runtime.adminAccessToken
+    && Number(runtime.adminAccessExpiresAt || 0) > (Date.now() + 30_000);
+  if (tokenIsFresh) {
+    return runtime.adminAccessToken;
+  }
+
+  if (runtime.adminAccessPromise) {
+    return runtime.adminAccessPromise;
+  }
+
+  runtime.adminAccessPromise = (async () => {
+    const challenge = await requestAdminAccessChallenge(runtime.config, {
+      walletAddress: runtime.account,
+    });
+    const signature = await runtime.signer.signMessage(challenge.message);
+    const session = await completeAdminAccess(runtime.config, {
+      walletAddress: runtime.account,
+      challengeId: challenge.challengeId,
+      signature,
+    });
+
+    runtime.adminAccessToken = String(session.accessToken || "").trim();
+    runtime.adminAccessExpiresAt = Number(session.expiresAt || 0);
+    return runtime.adminAccessToken;
+  })();
+
+  try {
+    return await runtime.adminAccessPromise;
+  } finally {
+    runtime.adminAccessPromise = null;
+  }
+}
+
+async function callAdminApi(callback, { retryOnAuthFailure = true } = {}) {
+  let accessToken = await ensureAdminAccess();
+
+  try {
+    return await callback(accessToken);
+  } catch (error) {
+    if (!retryOnAuthFailure || !isAdminAccessError(error)) {
+      throw error;
+    }
+
+    resetAdminAccess();
+    accessToken = await ensureAdminAccess();
+    return callback(accessToken);
+  }
 }
 
 function createBuilderRow(overrides = {}) {
@@ -1045,6 +1261,164 @@ function renderClaimLookupResults() {
     .join("");
 }
 
+function renderManagementSummary() {
+  els.managementAccountCount.textContent = String(runtime.managementSummary.accountCount || 0);
+  els.managementFollowerCount.textContent = String(runtime.managementSummary.followerCount || 0);
+  els.managementRecoveryCandidateCount.textContent = String(runtime.managementSummary.recoveryCandidateCount || 0);
+  els.managementSubmissionCount.textContent = String(runtime.managementSummary.recoverySubmissionCount || 0);
+  els.managementLatestSnapshot.textContent = runtime.managementSummary.latestSnapshotCapturedAt
+    ? formatManagementDateTime(runtime.managementSummary.latestSnapshotCapturedAt)
+    : "-";
+}
+
+function renderAccountsPagination() {
+  els.accountsPaginationLabel.textContent = formatPaginationLabel(
+    runtime.accountsPagination,
+    "account",
+    "accounts",
+  );
+  els.accountsPreviousPageButton.disabled = !runtime.accountsPagination.hasPreviousPage;
+  els.accountsNextPageButton.disabled = !runtime.accountsPagination.hasNextPage;
+}
+
+function renderAccountsTable() {
+  renderAccountsPagination();
+
+  if (!runtime.accountsRows.length) {
+    els.accountsTableBody.innerHTML = '<tr><td colspan="8" class="empty-row">No matching accounts were found.</td></tr>';
+    return;
+  }
+
+  els.accountsTableBody.innerHTML = runtime.accountsRows
+    .map((account) => `
+      <tr>
+        <td><strong>${escapeHtml(account.username || "-")}</strong></td>
+        <td>${escapeHtml(account.xUserId || "-")}</td>
+        <td>${renderExplorerAddress(account.walletAddress)}</td>
+        <td>${escapeHtml(account.walletSource || "-")}</td>
+        <td>${createFlagBadge(account.isFollower)}</td>
+        <td>${createFlagBadge(account.needsRecovery, { positiveLabel: "Needs action", negativeLabel: "Clear" })}</td>
+        <td>
+          <div class="management-meta-stack">
+            <strong>${Number(account.snapshotsSeenCount || 0)}</strong>
+            <span>${escapeHtml(account.firstSeenFollowingAt ? `First: ${formatManagementDateTime(account.firstSeenFollowingAt)}` : "No snapshot history")}</span>
+          </div>
+        </td>
+        <td>
+          <div class="management-meta-stack">
+            <strong>${escapeHtml(account.latestSnapshotCapturedAt ? formatManagementDateTime(account.latestSnapshotCapturedAt) : "No snapshot")}</strong>
+            <span>${escapeHtml(`Updated: ${formatManagementDateTime(account.updatedAt)}`)}</span>
+          </div>
+        </td>
+      </tr>
+    `)
+    .join("");
+}
+
+function renderRecoveryPagination() {
+  els.recoveryPaginationLabel.textContent = formatPaginationLabel(
+    runtime.recoveryPagination,
+    "submission",
+    "submissions",
+  );
+  els.recoveryPreviousPageButton.disabled = !runtime.recoveryPagination.hasPreviousPage;
+  els.recoveryNextPageButton.disabled = !runtime.recoveryPagination.hasNextPage;
+}
+
+function renderRecoverySubmissionsTable() {
+  renderRecoveryPagination();
+
+  if (!runtime.recoverySubmissionRows.length) {
+    els.recoverySubmissionsBody.innerHTML = '<tr><td colspan="7" class="empty-row">No matching recovery submissions were found.</td></tr>';
+    return;
+  }
+
+  els.recoverySubmissionsBody.innerHTML = runtime.recoverySubmissionRows
+    .map((submission) => `
+      <tr>
+        <td>${escapeHtml(formatManagementDateTime(submission.submittedAt))}</td>
+        <td><strong>${escapeHtml(submission.usernameAtSubmission || "-")}</strong></td>
+        <td>${escapeHtml(submission.xUserId || "-")}</td>
+        <td>${renderExplorerAddress(submission.walletAddress)}</td>
+        <td>${createFlagBadge(submission.wasKnownFollower)}</td>
+        <td>${createFlagBadge(submission.wasRecoveryCandidate, { positiveLabel: "Needs action", negativeLabel: "Clear" })}</td>
+        <td>${escapeHtml(submission.status || "-")}</td>
+      </tr>
+    `)
+    .join("");
+}
+
+function applyManagementResponse(payload) {
+  runtime.managementSummary = payload?.summary || runtime.managementSummary;
+}
+
+async function loadAccountsPage(page = 1) {
+  const payload = await callAdminApi((accessToken) => fetchAdminAccounts(runtime.config, accessToken, {
+    page,
+    pageSize: Number(els.accountsPageSizeSelect?.value || runtime.accountsPagination.pageSize || 50),
+    search: runtime.accountsSearch,
+  }));
+
+  applyManagementResponse(payload);
+  runtime.accountsRows = Array.isArray(payload?.accounts) ? payload.accounts : [];
+  runtime.accountsPagination = payload?.pagination || runtime.accountsPagination;
+  renderManagementSummary();
+  renderAccountsTable();
+}
+
+async function loadRecoverySubmissionsPage(page = 1) {
+  const payload = await callAdminApi((accessToken) => fetchAdminRecoverySubmissions(runtime.config, accessToken, {
+    page,
+    pageSize: Number(els.recoveryPageSizeSelect?.value || runtime.recoveryPagination.pageSize || 50),
+    search: runtime.recoverySearch,
+  }));
+
+  applyManagementResponse(payload);
+  runtime.recoverySubmissionRows = Array.isArray(payload?.submissions) ? payload.submissions : [];
+  runtime.recoveryPagination = payload?.pagination || runtime.recoveryPagination;
+  renderManagementSummary();
+  renderRecoverySubmissionsTable();
+}
+
+async function refreshAccountManagementData() {
+  if (!isOwner()) {
+    runtime.managementSummary = {
+      accountCount: 0,
+      followerCount: 0,
+      recoveryCandidateCount: 0,
+      latestSnapshotCapturedAt: null,
+      recoverySubmissionCount: 0,
+    };
+    runtime.accountsRows = [];
+    runtime.recoverySubmissionRows = [];
+    runtime.hasLoadedAccountsTab = false;
+    renderManagementSummary();
+    renderAccountsTable();
+    renderRecoverySubmissionsTable();
+    return;
+  }
+
+  await Promise.all([
+    loadAccountsPage(runtime.accountsPagination.page || 1),
+    loadRecoverySubmissionsPage(runtime.recoveryPagination.page || 1),
+  ]);
+  runtime.hasLoadedAccountsTab = true;
+}
+
+async function handleAccountsTemplateDownload() {
+  downloadTextFile("accounts-template.csv", `${ADMIN_ACCOUNTS_TEMPLATE_CSV}\n`, "text/csv");
+}
+
+async function handleRecoveryExport(format) {
+  const payload = await callAdminApi((accessToken) => exportAdminRecoverySubmissions(runtime.config, accessToken, format));
+  const fileName = String(payload?.fileName || `recovery-submissions.${format === "csv" ? "csv" : "json"}`).trim();
+  const content = String(payload?.content || "");
+  const contentType = String(payload?.contentType || (format === "csv" ? "text/csv" : "application/json")).trim();
+
+  downloadTextFile(fileName, content, contentType);
+  logger.log(`Recovery submissions exported as ${fileName}.`, "success");
+}
+
 function renderEpochList() {
   runtime.roundRows = buildRoundRows();
 
@@ -1210,6 +1584,11 @@ function syncAdminTabs() {
 function setAdminTab(tabId) {
   runtime.activeAdminTab = tabId;
   syncAdminTabs();
+  if (tabId === "accounts" && isOwner()) {
+    void refreshAccountManagementData().catch((error) => {
+      reportError(error, "Load follower management");
+    });
+  }
 }
 
 function applyOwnerGate() {
@@ -1217,6 +1596,7 @@ function applyOwnerGate() {
   els.connectedAccount.textContent = runtime.account || "No wallet connected";
 
   if (!runtime.provider) {
+      resetAdminAccess();
       els.accountRole.textContent = "Wallet missing";
       els.adminGateMessage.textContent = "Install a compatible browser wallet to manage the airdrop.";
       els.switchNetworkGateButton.hidden = true;
@@ -1226,6 +1606,7 @@ function applyOwnerGate() {
   }
 
   if (!runtime.account) {
+      resetAdminAccess();
       els.accountRole.textContent = "Disconnected";
       els.adminGateMessage.textContent = "Connect the owner or pending owner wallet to view admin controls.";
       els.switchNetworkGateButton.hidden = true;
@@ -1235,6 +1616,7 @@ function applyOwnerGate() {
   }
 
   if (!isReadyChain()) {
+      resetAdminAccess();
       els.accountRole.textContent = "Wrong network";
       els.adminGateMessage.textContent = "Switch the connected wallet to the configured network to manage the airdrop.";
       els.switchNetworkGateButton.hidden = false;
@@ -1244,6 +1626,7 @@ function applyOwnerGate() {
   }
 
   if (!runtime.owner) {
+      resetAdminAccess();
       els.accountRole.textContent = "Connected wallet";
       els.adminGateMessage.textContent = "Owner address is not available yet. Check the contract config.";
       els.switchNetworkGateButton.hidden = true;
@@ -1253,12 +1636,17 @@ function applyOwnerGate() {
   }
 
   if (!hasOwnershipAccess()) {
+      resetAdminAccess();
       els.accountRole.textContent = "Connected wallet";
       els.adminGateMessage.textContent = "This page only unlocks for the current owner or pending owner address.";
       els.switchNetworkGateButton.hidden = true;
       els.adminShell.hidden = true;
       els.pendingOwnerShell.hidden = true;
       return;
+  }
+
+  if (!isOwner()) {
+    resetAdminAccess();
   }
 
   els.accountRole.textContent = isOwner() ? "Owner connected" : "Pending owner connected";
@@ -1345,6 +1733,10 @@ async function refreshPage() {
   applyOwnershipSection();
   applyPendingOwnerSection();
   updateStartAirdropButtonState();
+
+  if (runtime.activeAdminTab === "accounts" && isOwner()) {
+    await refreshAccountManagementData();
+  }
 }
 
 async function acceptOwnershipTransaction() {
@@ -1970,6 +2362,213 @@ function bindEvents() {
     }
   });
 
+  els.accountsImportForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    try {
+      const file = els.accountsImportFileInput?.files?.[0];
+      if (!file) {
+        throw new Error("Choose a combined accounts CSV file.");
+      }
+
+      const content = await file.text();
+      await callAdminApi((accessToken) => importAdminAccounts(runtime.config, accessToken, {
+        fileName: file.name,
+        content,
+      }));
+
+      els.accountsImportFileInput.value = "";
+      runtime.accountsPagination.page = 1;
+      await loadAccountsPage(1);
+      logger.log(`Accounts imported from ${file.name}.`, "success");
+    } catch (error) {
+      reportError(error, "Import accounts");
+    }
+  });
+
+  els.downloadAccountsTemplateButton?.addEventListener("click", async () => {
+    try {
+      await handleAccountsTemplateDownload();
+      logger.log("Accounts CSV template downloaded.", "success");
+    } catch (error) {
+      reportError(error, "Download accounts template");
+    }
+  });
+
+  els.singleAccountForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    try {
+      const payload = await callAdminApi((accessToken) => saveAdminAccount(runtime.config, accessToken, {
+        username: els.singleAccountUsernameInput?.value,
+        xUserId: els.singleAccountUserIdInput?.value,
+        walletAddress: els.singleAccountWalletInput?.value,
+        isFollower: Boolean(els.singleAccountIsFollowerInput?.checked),
+        needsRecovery: Boolean(els.singleAccountNeedsRecoveryInput?.checked),
+      }));
+
+      applyManagementResponse(payload);
+      els.singleAccountUsernameInput.value = "";
+      els.singleAccountUserIdInput.value = "";
+      els.singleAccountWalletInput.value = "";
+      els.singleAccountIsFollowerInput.checked = false;
+      els.singleAccountNeedsRecoveryInput.checked = false;
+
+      await loadAccountsPage(runtime.accountsPagination.page || 1);
+      logger.log("Account saved.", "success");
+    } catch (error) {
+      reportError(error, "Save account");
+    }
+  });
+
+  els.accountsQueryForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    try {
+      runtime.accountsSearch = String(els.accountsSearchInput?.value || "").trim();
+      runtime.accountsPagination.page = 1;
+      await loadAccountsPage(1);
+      logger.log("Account filter applied.", "success");
+    } catch (error) {
+      reportError(error, "Filter accounts");
+    }
+  });
+
+  els.accountsClearSearchButton?.addEventListener("click", async () => {
+    try {
+      els.accountsSearchInput.value = "";
+      runtime.accountsSearch = "";
+      runtime.accountsPagination.page = 1;
+      await loadAccountsPage(1);
+      logger.log("Account filter cleared.", "success");
+    } catch (error) {
+      reportError(error, "Clear account filter");
+    }
+  });
+
+  els.accountsPageSizeSelect?.addEventListener("change", async () => {
+    try {
+      runtime.accountsPagination.page = 1;
+      await loadAccountsPage(1);
+    } catch (error) {
+      reportError(error, "Change accounts page size");
+    }
+  });
+
+  els.accountsPreviousPageButton?.addEventListener("click", async () => {
+    try {
+      if (!runtime.accountsPagination.hasPreviousPage) return;
+      await loadAccountsPage((runtime.accountsPagination.page || 1) - 1);
+    } catch (error) {
+      reportError(error, "Load previous accounts page");
+    }
+  });
+
+  els.accountsNextPageButton?.addEventListener("click", async () => {
+    try {
+      if (!runtime.accountsPagination.hasNextPage) return;
+      await loadAccountsPage((runtime.accountsPagination.page || 1) + 1);
+    } catch (error) {
+      reportError(error, "Load next accounts page");
+    }
+  });
+
+  els.recoveryImportForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    try {
+      const file = els.recoveryImportFileInput?.files?.[0];
+      if (!file) {
+        throw new Error("Choose a recovery submissions JSON file.");
+      }
+
+      const content = await file.text();
+      await callAdminApi((accessToken) => importAdminRecoverySubmissions(runtime.config, accessToken, {
+        fileName: file.name,
+        content,
+      }));
+
+      els.recoveryImportFileInput.value = "";
+      runtime.accountsPagination.page = 1;
+      runtime.recoveryPagination.page = 1;
+      await Promise.all([
+        loadAccountsPage(1),
+        loadRecoverySubmissionsPage(1),
+      ]);
+      logger.log(`Recovery submissions imported from ${file.name}.`, "success");
+    } catch (error) {
+      reportError(error, "Import recovery submissions");
+    }
+  });
+
+  els.exportRecoveryJsonButton?.addEventListener("click", async () => {
+    try {
+      await handleRecoveryExport("json");
+    } catch (error) {
+      reportError(error, "Export recovery submissions JSON");
+    }
+  });
+
+  els.exportRecoveryCsvButton?.addEventListener("click", async () => {
+    try {
+      await handleRecoveryExport("csv");
+    } catch (error) {
+      reportError(error, "Export recovery submissions CSV");
+    }
+  });
+
+  els.recoveryQueryForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    try {
+      runtime.recoverySearch = String(els.recoverySearchInput?.value || "").trim();
+      runtime.recoveryPagination.page = 1;
+      await loadRecoverySubmissionsPage(1);
+      logger.log("Recovery submission filter applied.", "success");
+    } catch (error) {
+      reportError(error, "Filter recovery submissions");
+    }
+  });
+
+  els.recoveryClearSearchButton?.addEventListener("click", async () => {
+    try {
+      els.recoverySearchInput.value = "";
+      runtime.recoverySearch = "";
+      runtime.recoveryPagination.page = 1;
+      await loadRecoverySubmissionsPage(1);
+      logger.log("Recovery submission filter cleared.", "success");
+    } catch (error) {
+      reportError(error, "Clear recovery submission filter");
+    }
+  });
+
+  els.recoveryPageSizeSelect?.addEventListener("change", async () => {
+    try {
+      runtime.recoveryPagination.page = 1;
+      await loadRecoverySubmissionsPage(1);
+    } catch (error) {
+      reportError(error, "Change recovery submissions page size");
+    }
+  });
+
+  els.recoveryPreviousPageButton?.addEventListener("click", async () => {
+    try {
+      if (!runtime.recoveryPagination.hasPreviousPage) return;
+      await loadRecoverySubmissionsPage((runtime.recoveryPagination.page || 1) - 1);
+    } catch (error) {
+      reportError(error, "Load previous recovery submissions page");
+    }
+  });
+
+  els.recoveryNextPageButton?.addEventListener("click", async () => {
+    try {
+      if (!runtime.recoveryPagination.hasNextPage) return;
+      await loadRecoverySubmissionsPage((runtime.recoveryPagination.page || 1) + 1);
+    } catch (error) {
+      reportError(error, "Load next recovery submissions page");
+    }
+  });
+
   bindWalletEvents({
     onAccountsChanged: async () => {
       await refreshPage();
@@ -1998,6 +2597,9 @@ function bindEvents() {
 async function init() {
   bindEvents();
   updateToastOffset();
+  renderManagementSummary();
+  renderAccountsTable();
+  renderRecoverySubmissionsTable();
   renderSelectedRoundClaims();
   renderClaimLookupResults();
   syncAdminTabs();
