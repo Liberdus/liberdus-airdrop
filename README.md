@@ -120,7 +120,7 @@ After the user signs in with X, the page requests a wallet signature and submits
 For local development:
 
 ```bash
-npm run xauth:local
+npm run serve
 ```
 
 The local backend now lives under `backend/`.
