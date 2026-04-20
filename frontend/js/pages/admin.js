@@ -1720,7 +1720,7 @@ function setAdminTab(tabId) {
 
 function applyOwnerGate() {
   els.ownerAddress.textContent = runtime.owner || "-";
-  els.connectedAccount.textContent = runtime.account || "No wallet connected";
+  els.connectedAccount.textContent = runtime.config.airdropAddress || "No contract configured";
 
   if (!runtime.provider) {
       resetAdminAccess();
