@@ -31,11 +31,15 @@ const AUTH_COMPLETE_QUERY_VALUE = "complete";
 const AUTH_ERROR_QUERY_PARAM = "x_error";
 const AUTH_SESSION_COOKIE_NAME = "liberdus_x_session";
 const AUTH_INIT_COOKIE_NAME = "liberdus_x_oauth_init";
+const ADMIN_ACCESS_HEADER_NAME = "x-admin-token";
 const AUTH_SESSION_TTL_MS = 15 * 60 * 1000;
+const ADMIN_ACCESS_SESSION_TTL_MS = 30 * 60 * 1000;
 const REQUEST_TOKEN_TTL_MS = 10 * 60 * 1000;
 const CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const ADMIN_ROUND_SAVE_CHALLENGE_TTL_MS = 10 * 60 * 1000;
+const ADMIN_ACCESS_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const MAX_JSON_BODY_BYTES = 32 * 1024;
+const MAX_IMPORT_BODY_BYTES = 5 * 1024 * 1024;
 const RATE_LIMITS = {
   start: { limit: 12, windowMs: 10 * 60 * 1000 },
   callback: { limit: 24, windowMs: 10 * 60 * 1000 },
@@ -47,6 +51,14 @@ const RATE_LIMITS = {
   rounds: { limit: 120, windowMs: 60 * 1000 },
   claimLookup: { limit: 120, windowMs: 60 * 1000 },
   roundClaims: { limit: 120, windowMs: 60 * 1000 },
+  adminAccessChallenge: { limit: 20, windowMs: 10 * 60 * 1000 },
+  adminAccessComplete: { limit: 20, windowMs: 10 * 60 * 1000 },
+  adminAccountsRead: { limit: 120, windowMs: 60 * 1000 },
+  adminAccountsImport: { limit: 20, windowMs: 10 * 60 * 1000 },
+  adminAccountsWrite: { limit: 40, windowMs: 10 * 60 * 1000 },
+  adminSubmissionsRead: { limit: 120, windowMs: 60 * 1000 },
+  adminSubmissionsImport: { limit: 20, windowMs: 10 * 60 * 1000 },
+  adminSubmissionsExport: { limit: 20, windowMs: 10 * 60 * 1000 },
   adminDraftChallenge: { limit: 20, windowMs: 10 * 60 * 1000 },
   saveRound: { limit: 20, windowMs: 10 * 60 * 1000 },
   deployRound: { limit: 20, windowMs: 10 * 60 * 1000 },
@@ -56,6 +68,8 @@ const RATE_LIMITS = {
 const authSessions = new Map();
 const requestTokens = new Map();
 const linkChallenges = new Map();
+const adminAccessChallenges = new Map();
+const adminAccessSessions = new Map();
 const adminRoundSaveChallenges = new Map();
 const rateLimits = new Map();
 
@@ -318,7 +332,7 @@ function setCorsHeaders(request, response) {
   response.setHeader("Access-Control-Allow-Origin", origin);
   response.setHeader("Access-Control-Allow-Credentials", "true");
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  response.setHeader("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token, X-Admin-Token");
   response.setHeader("Access-Control-Max-Age", "600");
   response.setHeader("Vary", "Origin, Access-Control-Request-Headers");
   return true;
@@ -346,6 +360,17 @@ function writeJson(response, statusCode, value, headers = {}) {
   response.end(`${JSON.stringify(value)}\n`);
 }
 
+function writeText(response, statusCode, value, contentType = "text/plain; charset=utf-8", headers = {}) {
+  response.writeHead(statusCode, {
+    "Content-Type": contentType,
+    "Cache-Control": "no-store, private, max-age=0",
+    Pragma: "no-cache",
+    "Content-Security-Policy": "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    ...headers,
+  });
+  response.end(String(value || ""));
+}
+
 function redirect(response, location) {
   response.writeHead(302, {
     Location: location,
@@ -355,13 +380,13 @@ function redirect(response, location) {
   response.end();
 }
 
-function readJsonRequest(request) {
+function readJsonRequest(request, maxBytes = MAX_JSON_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let rawBody = "";
 
     request.on("data", (chunk) => {
       rawBody += chunk;
-      if (Buffer.byteLength(rawBody, "utf8") > MAX_JSON_BODY_BYTES) {
+      if (Buffer.byteLength(rawBody, "utf8") > maxBytes) {
         reject(new HttpError(413, "Request body is too large."));
         request.destroy();
       }
@@ -541,6 +566,18 @@ function pruneExpiredState() {
     }
   }
 
+  for (const [challengeId, challenge] of adminAccessChallenges.entries()) {
+    if (challenge.expiresAtMs <= now) {
+      adminAccessChallenges.delete(challengeId);
+    }
+  }
+
+  for (const [accessToken, session] of adminAccessSessions.entries()) {
+    if (session.expiresAtMs <= now) {
+      adminAccessSessions.delete(accessToken);
+    }
+  }
+
   for (const [challengeId, challenge] of adminRoundSaveChallenges.entries()) {
     if (challenge.expiresAtMs <= now) {
       adminRoundSaveChallenges.delete(challengeId);
@@ -664,6 +701,45 @@ function requireCsrf(request, session) {
   }
 }
 
+function parseBooleanInput(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on";
+}
+
+function parsePositiveInteger(value, fallbackValue, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+  if (!Number.isInteger(parsed)) {
+    return fallbackValue;
+  }
+
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function formatDownloadTimestamp(value = new Date()) {
+  return value.toISOString().replace(/[:.]/gu, "-");
+}
+
+function escapeCsvCell(value) {
+  const normalized = value == null ? "" : String(value);
+  if (!/[",\r\n]/u.test(normalized)) {
+    return normalized;
+  }
+
+  return `"${normalized.replace(/"/gu, "\"\"")}"`;
+}
+
+function buildCsv(headers, rows) {
+  const lines = [
+    headers.map((header) => escapeCsvCell(header)).join(","),
+    ...rows.map((row) => row.map((value) => escapeCsvCell(value)).join(",")),
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
 function buildWalletLinkMessage({ profile, walletAddress, challengeId, issuedAt }) {
   return [
     "Liberdus follower recovery",
@@ -675,6 +751,20 @@ function buildWalletLinkMessage({ profile, walletAddress, challengeId, issuedAt 
     `Issued at: ${issuedAt}`,
     "",
     "Sign this message to prove wallet ownership for follower reward recovery.",
+  ].join("\n");
+}
+
+function buildAdminAccessMessage({ walletAddress, challengeId, issuedAt, chainId, contractAddress }) {
+  return [
+    "Liberdus admin access",
+    "",
+    `Wallet: ${walletAddress}`,
+    `Chain ID: ${chainId}`,
+    `Contract: ${contractAddress}`,
+    `Challenge: ${challengeId}`,
+    `Issued at: ${issuedAt}`,
+    "",
+    "Sign this message to access follower and recovery submission management.",
   ].join("\n");
 }
 
@@ -788,6 +878,41 @@ function serializeSubmissionForClient(submission) {
   };
 }
 
+function serializeAdminAccount(account) {
+  if (!account) return null;
+
+  return {
+    ...serializeAccountForClient(account),
+    xAccountCreatedAt: account.xAccountCreatedAt || null,
+    latestSnapshotCapturedAt: account.latestSnapshotCapturedAt || null,
+    createdAt: account.createdAt || null,
+    updatedAt: account.updatedAt || null,
+  };
+}
+
+function serializeAdminSubmission(submission) {
+  if (!submission) return null;
+
+  return {
+    ...serializeSubmissionForClient(submission),
+    accountId: submission.accountId == null ? null : Number(submission.accountId),
+    createdAt: submission.createdAt || null,
+  };
+}
+
+function buildAdminSummary() {
+  const accountStats = accountStore.getStats();
+  const submissionStats = recoverySubmissionStore.getStats();
+
+  return {
+    accountCount: accountStats.accountCount,
+    followerCount: accountStats.followerCount,
+    recoveryCandidateCount: accountStats.recoveryCandidateCount,
+    latestSnapshotCapturedAt: accountStats.latestSnapshotCapturedAt,
+    recoverySubmissionCount: submissionStats.submissionCount,
+  };
+}
+
 function serializeAirdropRoundSummary(round) {
   if (!round) return null;
 
@@ -876,6 +1001,36 @@ function getRequiredAdminRoundSaveChallenge(body) {
   }
 
   return challenge;
+}
+
+function getRequiredAdminAccessChallenge(body) {
+  const challengeId = String(body?.challengeId || "").trim();
+  if (!challengeId) {
+    throw new HttpError(400, "Admin access request must include challengeId.");
+  }
+
+  pruneExpiredState();
+  const challenge = adminAccessChallenges.get(challengeId);
+  if (!challenge) {
+    throw new HttpError(400, "Admin access challenge expired. Start again.");
+  }
+
+  return challenge;
+}
+
+function getRequiredAdminAccessSession(request) {
+  pruneExpiredState();
+  const accessToken = String(request.headers[ADMIN_ACCESS_HEADER_NAME] || "").trim();
+  if (!accessToken) {
+    throw new HttpError(401, "Admin access token is required.");
+  }
+
+  const session = adminAccessSessions.get(accessToken);
+  if (!session) {
+    throw new HttpError(401, "Admin access expired. Sign again.");
+  }
+
+  return session;
 }
 
 function getHealthPayload(request) {
@@ -1124,6 +1279,300 @@ async function handleRoundsLookup(response) {
   writeJson(response, 200, {
     rounds: rounds.map((round) => serializeAirdropRoundSummary(round)),
   });
+}
+
+async function handleAdminAccessChallenge(request, response) {
+  const body = await readJsonRequest(request);
+  const walletAddress = requireWalletAddress(body.walletAddress);
+  const chainConfig = requireChainConfig(appConfig);
+  const currentOwner = await fetchAirdropOwner(chainConfig);
+
+  if (ethers.getAddress(currentOwner) !== walletAddress) {
+    throw new HttpError(403, "Only the current contract owner can access follower management.");
+  }
+
+  const challengeId = createRandomToken(18);
+  const issuedAt = new Date().toISOString();
+  const message = buildAdminAccessMessage({
+    walletAddress,
+    challengeId,
+    issuedAt,
+    chainId: chainConfig.chainId,
+    contractAddress: chainConfig.airdropAddress,
+  });
+
+  adminAccessChallenges.set(challengeId, {
+    challengeId,
+    walletAddress,
+    message,
+    issuedAt,
+    expiresAtMs: Date.now() + ADMIN_ACCESS_CHALLENGE_TTL_MS,
+  });
+
+  writeJson(response, 200, {
+    challengeId,
+    message,
+    expiresAt: Date.now() + ADMIN_ACCESS_CHALLENGE_TTL_MS,
+    walletAddress,
+  });
+}
+
+async function handleAdminAccessComplete(request, response) {
+  const body = await readJsonRequest(request);
+  const challenge = getRequiredAdminAccessChallenge(body);
+  const walletAddress = requireWalletAddress(body.walletAddress);
+  const signature = String(body.signature || "").trim();
+
+  if (!signature) {
+    throw new HttpError(400, "Admin access request must include a wallet signature.");
+  }
+
+  if (challenge.walletAddress !== walletAddress) {
+    throw new HttpError(400, "Admin access challenge does not match the signing wallet.");
+  }
+
+  let recoveredAddress;
+  try {
+    recoveredAddress = ethers.verifyMessage(challenge.message, signature);
+  } catch {
+    throw new HttpError(400, "Admin access signature is invalid.");
+  }
+
+  if (ethers.getAddress(recoveredAddress) !== walletAddress) {
+    throw new HttpError(403, "Admin access signature did not match the supplied wallet.");
+  }
+
+  const chainConfig = requireChainConfig(appConfig);
+  const currentOwner = await fetchAirdropOwner(chainConfig);
+  if (ethers.getAddress(currentOwner) !== walletAddress) {
+    throw new HttpError(403, "Only the current contract owner can access follower management.");
+  }
+
+  adminAccessChallenges.delete(challenge.challengeId);
+
+  const accessToken = createRandomToken(24);
+  const session = {
+    accessToken,
+    walletAddress,
+    createdAt: new Date().toISOString(),
+    expiresAtMs: Date.now() + ADMIN_ACCESS_SESSION_TTL_MS,
+  };
+  adminAccessSessions.set(accessToken, session);
+
+  writeJson(response, 200, {
+    accessToken,
+    walletAddress,
+    expiresAt: session.expiresAtMs,
+  });
+}
+
+function getAdminListOptions(requestUrl) {
+  return {
+    page: parsePositiveInteger(requestUrl.searchParams.get("page"), 1, { min: 1, max: 10000 }),
+    pageSize: parsePositiveInteger(requestUrl.searchParams.get("pageSize"), 50, { min: 1, max: 200 }),
+    search: String(requestUrl.searchParams.get("query") || "").trim(),
+  };
+}
+
+async function handleAdminAccountsLookup(request, response, requestUrl) {
+  getRequiredAdminAccessSession(request);
+  const result = accountStore.listAccounts(getAdminListOptions(requestUrl));
+
+  writeJson(response, 200, {
+    summary: buildAdminSummary(),
+    pagination: result.pagination,
+    accounts: result.accounts.map((account) => serializeAdminAccount(account)),
+  });
+}
+
+async function handleAdminAccountsImport(request, response) {
+  getRequiredAdminAccessSession(request);
+  const body = await readJsonRequest(request, MAX_IMPORT_BODY_BYTES);
+  const csvContent = String(body.csv || body.content || "");
+
+  if (!csvContent.trim()) {
+    throw new HttpError(400, "Accounts import must include CSV content.");
+  }
+
+  const result = accountStore.importCombinedAccountsCsv(csvContent, {
+    importedAt: String(body.importedAt || "").trim() || undefined,
+  });
+
+  writeJson(response, 200, {
+    fileName: String(body.fileName || "").trim() || null,
+    importedAt: result.importedAt,
+    importedCount: result.importedCount,
+    summary: buildAdminSummary(),
+  });
+}
+
+async function handleAdminAccountUpsert(request, response) {
+  getRequiredAdminAccessSession(request);
+  const body = await readJsonRequest(request);
+  const username = String(body.username || body.usernameDisplay || "").trim().replace(/^@+/u, "");
+  const xUserId = String(body.xUserId || "").trim();
+  const walletAddressValue = String(body.walletAddress || "").trim();
+  const updatedAt = new Date().toISOString();
+  const isFollower = parseBooleanInput(body.isFollower);
+  const needsRecovery = parseBooleanInput(body.needsRecovery);
+  const shouldSeedSnapshot = isFollower
+    && !String(body.snapshotCapturedAt || "").trim()
+    && !String(body.firstSeenFollowingAt || "").trim()
+    && !String(body.lastSeenFollowingAt || "").trim()
+    && !String(body.latestSnapshotCapturedAt || "").trim();
+
+  if (!username && !xUserId) {
+    throw new HttpError(400, "Manual account save requires a username or X user ID.");
+  }
+
+  const savedAccount = accountStore.saveAccount({
+    xUserId,
+    usernameDisplay: username,
+    xAccountCreatedAt: String(body.xAccountCreatedAt || "").trim() || undefined,
+    isFollower,
+    needsRecovery,
+    walletAddress: walletAddressValue ? requireWalletAddress(walletAddressValue) : null,
+    walletSource: walletAddressValue ? "form" : null,
+    snapshotCapturedAt: shouldSeedSnapshot
+      ? updatedAt
+      : (String(body.snapshotCapturedAt || "").trim() || undefined),
+    firstSeenFollowingAt: String(body.firstSeenFollowingAt || "").trim() || undefined,
+    lastSeenFollowingAt: String(body.lastSeenFollowingAt || "").trim() || undefined,
+    snapshotsSeenCount: body.snapshotsSeenCount == null
+      ? undefined
+      : parsePositiveInteger(body.snapshotsSeenCount, 0, { min: 0, max: 1000000 }),
+    latestSnapshotCapturedAt: String(body.latestSnapshotCapturedAt || "").trim() || undefined,
+    updatedAt,
+  });
+
+  writeJson(response, 200, {
+    account: serializeAdminAccount(savedAccount),
+    summary: buildAdminSummary(),
+  });
+}
+
+async function handleAdminRecoverySubmissionsLookup(request, response, requestUrl) {
+  getRequiredAdminAccessSession(request);
+  const result = recoverySubmissionStore.listSubmissions(getAdminListOptions(requestUrl));
+
+  writeJson(response, 200, {
+    summary: buildAdminSummary(),
+    pagination: result.pagination,
+    submissions: result.submissions.map((submission) => serializeAdminSubmission(submission)),
+  });
+}
+
+async function handleAdminRecoverySubmissionsImport(request, response) {
+  getRequiredAdminAccessSession(request);
+  const body = await readJsonRequest(request, MAX_IMPORT_BODY_BYTES);
+  let payload = body.payload;
+
+  if (!payload) {
+    const rawContent = String(body.content || "").trim();
+    if (!rawContent) {
+      throw new HttpError(400, "Recovery submissions import must include JSON content.");
+    }
+
+    try {
+      payload = JSON.parse(rawContent);
+    } catch {
+      throw new HttpError(400, "Recovery submissions upload must be valid JSON.");
+    }
+  }
+
+  const result = recoverySubmissionStore.importLegacyPayload(payload, accountStore);
+
+  writeJson(response, 200, {
+    fileName: String(body.fileName || "").trim() || null,
+    importedCount: result.importedCount,
+    summary: buildAdminSummary(),
+  });
+}
+
+function buildRecoverySubmissionExportPayload(records) {
+  const exportedAt = new Date().toISOString();
+  return {
+    version: 1,
+    exportedAt,
+    recordCount: records.length,
+    records: records.map((record) => ({
+      id: record.id,
+      accountId: record.accountId,
+      xUserId: record.xUserId,
+      xUsername: record.usernameAtSubmission,
+      walletAddress: record.walletAddress,
+      signedMessage: record.signedMessage || "",
+      signature: record.signature || "",
+      isKnownFollower: Boolean(record.wasKnownFollower),
+      isRecoveryCandidate: Boolean(record.wasRecoveryCandidate),
+      status: record.status || "received",
+      updatedAt: record.submittedAt || exportedAt,
+      createdAt: record.createdAt || record.submittedAt || exportedAt,
+    })),
+  };
+}
+
+function buildRecoverySubmissionExportCsv(records) {
+  return buildCsv(
+    [
+      "id",
+      "account_id",
+      "x_user_id",
+      "username_at_submission",
+      "wallet_address",
+      "was_known_follower",
+      "was_recovery_candidate",
+      "status",
+      "submitted_at",
+      "created_at",
+      "signed_message",
+      "signature",
+    ],
+    records.map((record) => ([
+      record.id,
+      record.accountId == null ? "" : String(record.accountId),
+      record.xUserId,
+      record.usernameAtSubmission,
+      record.walletAddress,
+      record.wasKnownFollower ? "true" : "false",
+      record.wasRecoveryCandidate ? "true" : "false",
+      record.status,
+      record.submittedAt,
+      record.createdAt,
+      record.signedMessage || "",
+      record.signature || "",
+    ])),
+  );
+}
+
+async function handleAdminRecoverySubmissionsExport(request, response, requestUrl) {
+  getRequiredAdminAccessSession(request);
+  const format = String(requestUrl.searchParams.get("format") || "json").trim().toLowerCase();
+  const records = recoverySubmissionStore.listAllSubmissions({ includeSecrets: true });
+
+  if (format === "csv") {
+    const content = buildRecoverySubmissionExportCsv(records);
+    writeJson(response, 200, {
+      format,
+      fileName: `recovery-submissions-${formatDownloadTimestamp()}.csv`,
+      contentType: "text/csv",
+      content,
+    });
+    return;
+  }
+
+  if (format === "json") {
+    const exportPayload = buildRecoverySubmissionExportPayload(records);
+    writeJson(response, 200, {
+      format,
+      fileName: `recovery-submissions-${formatDownloadTimestamp()}.json`,
+      contentType: "application/json",
+      content: `${JSON.stringify(exportPayload, null, 2)}\n`,
+    });
+    return;
+  }
+
+  throw new HttpError(400, "Recovery submissions export format must be json or csv.");
 }
 
 function serializeAirdropClaimRecord(record) {
@@ -1636,6 +2085,62 @@ const server = http.createServer(async (request, response) => {
       requireAllowedOrigin(request, response);
       consumeRateLimit(request, "claimLookup");
       await handleClaimWalletLookup(response, requestUrl.searchParams.get("walletAddress"));
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/access/challenge") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminAccessChallenge");
+      await handleAdminAccessChallenge(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/access/complete") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminAccessComplete");
+      await handleAdminAccessComplete(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/accounts") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminAccountsRead");
+      await handleAdminAccountsLookup(request, response, requestUrl);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/accounts/import") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminAccountsImport");
+      await handleAdminAccountsImport(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/accounts") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminAccountsWrite");
+      await handleAdminAccountUpsert(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/recovery-submissions") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminSubmissionsRead");
+      await handleAdminRecoverySubmissionsLookup(request, response, requestUrl);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/recovery-submissions/import") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminSubmissionsImport");
+      await handleAdminRecoverySubmissionsImport(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && pathname === "/api/admin/recovery-submissions/export") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "adminSubmissionsExport");
+      await handleAdminRecoverySubmissionsExport(request, response, requestUrl);
       return;
     }
 

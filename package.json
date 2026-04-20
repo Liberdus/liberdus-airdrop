@@ -24,7 +24,7 @@
     "followers:import": "node backend/import-x-followers.js",
     "recovery-candidates:import": "node backend/import-recovery-candidates.js",
     "recovery-submissions:import": "node backend/import-recovery-submissions.js",
-    "xauth:local": "node backend/server.js",
+    "serve": "node backend/server.js",
     "pm2:start": "pm2 start backend/pm2.config.cjs --update-env",
     "pm2:restart": "pm2 restart backend/pm2.config.cjs --update-env",
     "pm2:stop": "pm2 stop backend/pm2.config.cjs",

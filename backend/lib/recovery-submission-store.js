@@ -61,7 +61,74 @@ function createRecoverySubmissionStore(db) {
       ORDER BY datetime(submitted_at) DESC, rowid DESC
       LIMIT 1
     `),
+    listAllBySubmittedAt: db.prepare(`
+      SELECT *
+      FROM recovery_submissions
+      ORDER BY datetime(submitted_at) DESC, rowid DESC
+    `),
   };
+
+  function toSubmissionRecord(row, { includeSecrets = false } = {}) {
+    if (!row) {
+      return null;
+    }
+
+    const record = {
+      id: String(row.id || "").trim(),
+      accountId: row.account_id == null ? null : Number(row.account_id),
+      xUserId: String(row.x_user_id || "").trim(),
+      usernameAtSubmission: String(row.username_at_submission || "").trim(),
+      walletAddress: String(row.wallet_address || "").trim(),
+      wasKnownFollower: Boolean(row.was_known_follower),
+      wasRecoveryCandidate: Boolean(row.was_recovery_candidate),
+      status: String(row.status || "").trim(),
+      submittedAt: String(row.submitted_at || "").trim(),
+      createdAt: String(row.created_at || "").trim(),
+    };
+
+    if (includeSecrets) {
+      record.signedMessage = String(row.signed_message || "").trim();
+      record.signature = String(row.signature || "").trim();
+    }
+
+    return record;
+  }
+
+  function normalizeSubmissionQueryOptions(options = {}) {
+    const requestedPage = Number.parseInt(String(options.page || "1").trim(), 10);
+    const requestedPageSize = Number.parseInt(String(options.pageSize || "50").trim(), 10);
+    const search = String(options.search || options.query || "").trim().toLowerCase();
+
+    return {
+      page: Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
+      pageSize: Number.isInteger(requestedPageSize)
+        ? Math.min(Math.max(requestedPageSize, 1), 200)
+        : 50,
+      search,
+    };
+  }
+
+  function buildSubmissionSearchState(options = {}) {
+    const normalized = normalizeSubmissionQueryOptions(options);
+    const hasSearch = Boolean(normalized.search);
+    const sqlParams = hasSearch
+      ? {
+        search: `%${normalized.search}%`,
+      }
+      : {};
+
+    return {
+      ...normalized,
+      sqlParams,
+      whereClause: hasSearch
+        ? `
+          WHERE LOWER(username_at_submission) LIKE @search
+             OR LOWER(COALESCE(x_user_id, '')) LIKE @search
+             OR LOWER(wallet_address) LIKE @search
+        `
+        : "",
+    };
+  }
 
   const createSubmission = db.transaction((submission) => {
     statements.insertSubmission.run({
@@ -80,6 +147,52 @@ function createRecoverySubmissionStore(db) {
     });
   });
 
+  function importLegacyPayload(rawStore, accountStore) {
+    const records = Array.isArray(rawStore?.records) ? rawStore.records : [];
+    let importedCount = 0;
+
+    const transaction = db.transaction(() => {
+      for (const record of records) {
+        if (!record?.id || statements.hasSubmissionId.get(record.id)) {
+          continue;
+        }
+
+        const updatedAt = record.updatedAt || new Date().toISOString();
+        const profile = {
+          id: String(record.xUserId || "").trim(),
+          username: String(record.xUsername || "").trim(),
+          name: String(record.xName || record.xUsername || "").trim(),
+        };
+        const account = accountStore.upsertAuthenticatedProfile(profile, updatedAt);
+
+        if (record.isRecoveryCandidate && record.walletAddress) {
+          accountStore.saveRecoveryWallet(profile, String(record.walletAddress).trim(), updatedAt);
+        }
+
+        statements.insertSubmission.run({
+          id: record.id,
+          accountId: account?.id || null,
+          xUserId: String(record.xUserId || "").trim(),
+          usernameAtSubmission: String(record.xUsername || "").trim(),
+          walletAddress: String(record.walletAddress || "").trim(),
+          signedMessage: String(record.signedMessage || "").trim(),
+          signature: String(record.signature || "").trim(),
+          wasKnownFollower: record.isKnownFollower ? 1 : 0,
+          wasRecoveryCandidate: record.isRecoveryCandidate ? 1 : 0,
+          status: String(record.status || "legacy-import").trim() || "legacy-import",
+          submittedAt: String(record.updatedAt || record.createdAt || new Date().toISOString()),
+          createdAt: String(record.createdAt || record.updatedAt || new Date().toISOString()),
+        });
+        importedCount += 1;
+      }
+    });
+
+    transaction();
+    return {
+      importedCount,
+    };
+  }
+
   return {
     createSubmission(submission) {
       createSubmission(submission);
@@ -87,50 +200,55 @@ function createRecoverySubmissionStore(db) {
 
     importLegacyStore(filePath, accountStore) {
       const resolvedPath = path.resolve(filePath);
-      const rawStore = readJsonFile(resolvedPath);
-      const records = Array.isArray(rawStore?.records) ? rawStore.records : [];
-      let importedCount = 0;
-
-      const transaction = db.transaction(() => {
-        for (const record of records) {
-          if (!record?.id || statements.hasSubmissionId.get(record.id)) {
-            continue;
-          }
-
-          const profile = {
-            id: String(record.xUserId || "").trim(),
-            username: String(record.xUsername || "").trim(),
-            name: String(record.xName || record.xUsername || "").trim(),
-          };
-          const account = accountStore.upsertAuthenticatedProfile(profile, record.updatedAt || new Date().toISOString());
-
-          if (record.isRecoveryCandidate && record.walletAddress) {
-            accountStore.saveRecoveryWallet(profile, String(record.walletAddress).trim(), record.updatedAt || new Date().toISOString());
-          }
-
-          statements.insertSubmission.run({
-            id: record.id,
-            accountId: account?.id || null,
-            xUserId: String(record.xUserId || "").trim(),
-            usernameAtSubmission: String(record.xUsername || "").trim(),
-            walletAddress: String(record.walletAddress || "").trim(),
-            signedMessage: String(record.signedMessage || "").trim(),
-            signature: String(record.signature || "").trim(),
-            wasKnownFollower: record.isKnownFollower ? 1 : 0,
-            wasRecoveryCandidate: record.isRecoveryCandidate ? 1 : 0,
-            status: "legacy-import",
-            submittedAt: String(record.updatedAt || record.createdAt || new Date().toISOString()),
-            createdAt: String(record.createdAt || record.updatedAt || new Date().toISOString()),
-          });
-          importedCount += 1;
-        }
-      });
-
-      transaction();
+      const result = importLegacyPayload(readJsonFile(resolvedPath), accountStore);
       return {
-        importedCount,
+        importedCount: result.importedCount,
         sourceFilePath: resolvedPath,
       };
+    },
+
+    importLegacyPayload(rawStore, accountStore) {
+      return importLegacyPayload(rawStore, accountStore);
+    },
+
+    listSubmissions(options = {}) {
+      const searchState = buildSubmissionSearchState(options);
+      const totalRow = db.prepare(`
+        SELECT COUNT(*) AS total
+        FROM recovery_submissions
+        ${searchState.whereClause}
+      `).get(searchState.sqlParams) || {};
+      const total = Number(totalRow.total || 0);
+      const totalPages = total > 0 ? Math.ceil(total / searchState.pageSize) : 0;
+      const page = totalPages > 0 ? Math.min(searchState.page, totalPages) : 1;
+      const offset = (page - 1) * searchState.pageSize;
+      const rows = db.prepare(`
+        SELECT *
+        FROM recovery_submissions
+        ${searchState.whereClause}
+        ORDER BY datetime(submitted_at) DESC, rowid DESC
+        LIMIT @limit OFFSET @offset
+      `).all({
+        ...searchState.sqlParams,
+        limit: searchState.pageSize,
+        offset,
+      });
+
+      return {
+        submissions: rows.map((row) => toSubmissionRecord(row)),
+        pagination: {
+          page,
+          pageSize: searchState.pageSize,
+          total,
+          totalPages,
+          hasNextPage: totalPages > 0 && page < totalPages,
+          hasPreviousPage: page > 1,
+        },
+      };
+    },
+
+    listAllSubmissions(options = {}) {
+      return statements.listAllBySubmittedAt.all().map((row) => toSubmissionRecord(row, options));
     },
 
     getStats() {
@@ -151,17 +269,7 @@ function createRecoverySubmissionStore(db) {
         return null;
       }
 
-      return {
-        id: String(row.id || "").trim(),
-        accountId: row.account_id == null ? null : Number(row.account_id),
-        xUserId: String(row.x_user_id || "").trim(),
-        usernameAtSubmission: String(row.username_at_submission || "").trim(),
-        walletAddress: String(row.wallet_address || "").trim(),
-        wasKnownFollower: Boolean(row.was_known_follower),
-        wasRecoveryCandidate: Boolean(row.was_recovery_candidate),
-        status: String(row.status || "").trim(),
-        submittedAt: String(row.submitted_at || "").trim(),
-      };
+      return toSubmissionRecord(row);
     },
   };
 }

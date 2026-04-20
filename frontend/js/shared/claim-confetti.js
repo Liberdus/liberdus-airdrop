@@ -262,50 +262,84 @@ export function createClaimConfettiController(canvas, {
     resize();
 
     const compact = state.cssWidth < 560 || window.matchMedia("(max-width: 780px)").matches;
-    const baseCount = compact ? 38 : 62;
-    const followupCount = compact ? 28 : 44;
-    const baseVelocity = compact ? 12.5 : 15.5;
-    const scalar = compact ? 0.92 : 1;
+    const baseCount = compact ? 56 : 90;
+    const followupCount = compact ? 40 : 65;
+    const baseVelocity = compact ? 15 : 18.5;
+    const scalar = compact ? 1 : 1.1;
+    const roundSpacing = compact ? 220 : 250;
+    const rounds = [
+      {
+        offset: 0,
+        cornerCount: baseCount,
+        centerCount: compact ? 34 : 52,
+        velocity: baseVelocity,
+        cornerSpread: 46,
+        centerSpread: 30,
+        ticks: compact ? 105 : 115,
+        centerTicks: compact ? 98 : 108,
+        cornerScalar: scalar,
+        centerScalar: scalar * 1.02,
+        originY: 0.05,
+      },
+      {
+        offset: roundSpacing,
+        cornerCount: followupCount,
+        centerCount: compact ? 28 : 44,
+        velocity: baseVelocity - 0.9,
+        cornerSpread: 42,
+        centerSpread: 28,
+        ticks: compact ? 100 : 110,
+        centerTicks: compact ? 94 : 104,
+        cornerScalar: scalar * 0.98,
+        centerScalar: scalar,
+        originY: 0.08,
+      },
+      {
+        offset: roundSpacing * 2,
+        cornerCount: compact ? 32 : 50,
+        centerCount: compact ? 24 : 36,
+        velocity: baseVelocity - 1.6,
+        cornerSpread: 38,
+        centerSpread: 26,
+        ticks: compact ? 94 : 102,
+        centerTicks: compact ? 88 : 98,
+        cornerScalar: scalar * 0.94,
+        centerScalar: scalar * 0.96,
+        originY: 0.11,
+      },
+    ];
 
-    scheduleBurst({
-      particleCount: baseCount,
-      angle: 308,
-      spread: 34,
-      startVelocity: baseVelocity,
-      origin: { x: 0.06, y: 0.05 },
-      ticks: compact ? 88 : 98,
-      scalar,
-    });
+    for (const round of rounds) {
+      scheduleBurst({
+        particleCount: round.cornerCount,
+        angle: 308,
+        spread: round.cornerSpread,
+        startVelocity: round.velocity,
+        origin: { x: 0.06, y: round.originY },
+        ticks: round.ticks,
+        scalar: round.cornerScalar,
+      }, round.offset);
 
-    scheduleBurst({
-      particleCount: baseCount,
-      angle: 232,
-      spread: 34,
-      startVelocity: baseVelocity,
-      origin: { x: 0.94, y: 0.05 },
-      ticks: compact ? 88 : 98,
-      scalar,
-    }, 70);
+      scheduleBurst({
+        particleCount: round.cornerCount,
+        angle: 232,
+        spread: round.cornerSpread,
+        startVelocity: round.velocity,
+        origin: { x: 0.94, y: round.originY },
+        ticks: round.ticks,
+        scalar: round.cornerScalar,
+      }, round.offset + 70);
 
-    scheduleBurst({
-      particleCount: followupCount,
-      angle: 300,
-      spread: 28,
-      startVelocity: baseVelocity - 1,
-      origin: { x: 0.1, y: 0.09 },
-      ticks: compact ? 82 : 92,
-      scalar: scalar * 0.96,
-    }, 150);
-
-    scheduleBurst({
-      particleCount: followupCount,
-      angle: 240,
-      spread: 28,
-      startVelocity: baseVelocity - 1,
-      origin: { x: 0.9, y: 0.09 },
-      ticks: compact ? 82 : 92,
-      scalar: scalar * 0.96,
-    }, 220);
+      scheduleBurst({
+        particleCount: round.centerCount,
+        angle: 270,
+        spread: round.centerSpread,
+        startVelocity: round.velocity + 1,
+        origin: { x: 0.5, y: Math.max(0.03, round.originY - 0.02) },
+        ticks: round.centerTicks,
+        scalar: round.centerScalar,
+      }, round.offset + 115);
+    }
   };
 
   const destroy = () => {

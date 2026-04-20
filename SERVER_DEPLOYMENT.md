@@ -201,7 +201,7 @@ npm run accounts:import -- --file /absolute/path/to/combined_followers_and_respo
 The importer in [backend/import-accounts.js](</C:/Users/Chris/Documents/Code/liberdus/follower-campaign/liberdus-airdrop/backend/import-accounts.js>) understands these columns:
 
 ```csv
-x_username,wallet_address,x_user_id,x_account_created_at,is_follower,needs_recovery,first_seen_following_at,last_seen_following_at,snapshots_seen_count,latest_snapshot_captured_at
+x_username,wallet_address,x_user_id,x_account_created_at,is_follower,needs_recovery,snapshot_history_json,first_seen_following_at,last_seen_following_at,snapshots_seen_count,latest_snapshot_captured_at
 ```
 
 What they mean:
@@ -212,6 +212,7 @@ What they mean:
 - `x_account_created_at`: X account creation timestamp, if known
 - `is_follower`: `true` / `false`
 - `needs_recovery`: `true` / `false`
+- `snapshot_history_json`: JSON array of snapshot timestamps for that account
 - `first_seen_following_at`: earliest snapshot timestamp where the account was seen
 - `last_seen_following_at`: most recent snapshot timestamp where the account was seen
 - `snapshots_seen_count`: number of snapshots the account appeared in

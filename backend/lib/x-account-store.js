@@ -31,6 +31,16 @@ function readJsonFile(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function parseCsvText(csvText) {
+  return parse(String(csvText || ""), {
+    columns: true,
+    bom: true,
+    skip_empty_lines: true,
+    relax_column_count: true,
+    trim: true,
+  });
+}
+
 function parseSnapshotHistory(rawValue) {
   try {
     const parsed = JSON.parse(rawValue || "[]");
@@ -172,13 +182,7 @@ function normalizeRecoveryCandidates(filePath, options = {}) {
   const dedupedCandidates = new Map();
 
   if (extension === ".csv") {
-    const rows = parse(fs.readFileSync(filePath, "utf8"), {
-      columns: true,
-      bom: true,
-      skip_empty_lines: true,
-      relax_column_count: true,
-      trim: true,
-    });
+    const rows = parseCsvText(fs.readFileSync(filePath, "utf8"));
 
     for (const row of rows) {
       const usernameDisplay = String(
@@ -246,15 +250,9 @@ function normalizeRecoveryCandidates(filePath, options = {}) {
   };
 }
 
-function normalizeCombinedAccounts(filePath, options = {}) {
+function normalizeCombinedAccountsCsv(csvText, options = {}) {
   const importedAt = normalizeIsoDate(options.importedAt, new Date().toISOString());
-  const rows = parse(fs.readFileSync(filePath, "utf8"), {
-    columns: true,
-    bom: true,
-    skip_empty_lines: true,
-    relax_column_count: true,
-    trim: true,
-  });
+  const rows = parseCsvText(csvText);
   const dedupedAccounts = new Map();
 
   for (const row of rows) {
@@ -279,9 +277,10 @@ function normalizeCombinedAccounts(filePath, options = {}) {
       needsRecovery: parseBoolean(row.needs_recovery),
       walletAddress: String(row.wallet_address || "").trim(),
       walletSource: String(row.wallet_address || "").trim() ? "form" : null,
+      snapshotHistory: parseSnapshotHistory(row.snapshot_history_json),
       firstSeenFollowingAt: normalizeIsoDate(row.first_seen_following_at),
       lastSeenFollowingAt: normalizeIsoDate(row.last_seen_following_at),
-      snapshotsSeenCount: parseInteger(row.snapshots_seen_count, 0),
+      snapshotsSeenCount: parseInteger(row.snapshots_seen_count, undefined),
       latestSnapshotCapturedAt: normalizeIsoDate(row.latest_snapshot_captured_at),
       updatedAt: importedAt,
     });
@@ -291,6 +290,10 @@ function normalizeCombinedAccounts(filePath, options = {}) {
     importedAt,
     accounts: [...dedupedAccounts.values()],
   };
+}
+
+function normalizeCombinedAccounts(filePath, options = {}) {
+  return normalizeCombinedAccountsCsv(fs.readFileSync(filePath, "utf8"), options);
 }
 
 function pickWallet(existingRow, nextWalletAddress, nextWalletSource) {
@@ -535,6 +538,42 @@ function createAccountStore(db) {
     return toAccountRecord(statements.getById.get(existing.id));
   }
 
+  function normalizeAccountQueryOptions(options = {}) {
+    const requestedPage = Number.parseInt(String(options.page || "1").trim(), 10);
+    const requestedPageSize = Number.parseInt(String(options.pageSize || "50").trim(), 10);
+    const search = String(options.search || options.query || "").trim().toLowerCase();
+
+    return {
+      page: Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1,
+      pageSize: Number.isInteger(requestedPageSize)
+        ? Math.min(Math.max(requestedPageSize, 1), 200)
+        : 50,
+      search,
+    };
+  }
+
+  function buildAccountSearchState(options = {}) {
+    const normalized = normalizeAccountQueryOptions(options);
+    const hasSearch = Boolean(normalized.search);
+    const sqlParams = hasSearch
+      ? {
+        search: `%${normalized.search}%`,
+      }
+      : {};
+
+    return {
+      ...normalized,
+      sqlParams,
+      whereClause: hasSearch
+        ? `
+          WHERE LOWER(username_display) LIKE @search
+             OR LOWER(COALESCE(x_user_id, '')) LIKE @search
+             OR LOWER(COALESCE(wallet_address, '')) LIKE @search
+        `
+        : "",
+    };
+  }
+
   const importFollowerSnapshot = db.transaction((snapshot) => {
     const updatedAt = snapshot.importedAt;
     const currentLatest = normalizeIsoDate(statements.getGlobalLatestSnapshot.get()?.latestSnapshotCapturedAt);
@@ -601,6 +640,7 @@ function createAccountStore(db) {
         needsRecovery: account.needsRecovery,
         walletAddress: account.walletAddress,
         walletSource: account.walletSource,
+        snapshotHistory: account.snapshotHistory,
         firstSeenFollowingAt: account.firstSeenFollowingAt,
         lastSeenFollowingAt: account.lastSeenFollowingAt,
         snapshotsSeenCount: account.snapshotsSeenCount,
@@ -629,6 +669,10 @@ function createAccountStore(db) {
       return normalizeCombinedAccounts(filePath, options);
     },
 
+    normalizeCombinedAccountsCsv(csvText, options = {}) {
+      return normalizeCombinedAccountsCsv(csvText, options);
+    },
+
     importFollowerSnapshotFromFile(filePath, options = {}) {
       const resolvedPath = path.resolve(filePath);
       return importFollowerSnapshot(this.normalizeFollowerSnapshotFromFile(resolvedPath, options));
@@ -642,6 +686,10 @@ function createAccountStore(db) {
     importCombinedAccountsFromFile(filePath, options = {}) {
       const resolvedPath = path.resolve(filePath);
       return importCombinedAccounts(this.normalizeCombinedAccountsFromFile(resolvedPath, options));
+    },
+
+    importCombinedAccountsCsv(csvText, options = {}) {
+      return importCombinedAccounts(this.normalizeCombinedAccountsCsv(csvText, options));
     },
 
     getAccountByProfile(profile = {}) {
@@ -678,6 +726,46 @@ function createAccountStore(db) {
         walletSource: "recovery",
         updatedAt,
       });
+    },
+
+    saveAccount(input = {}) {
+      return saveAccount(input);
+    },
+
+    listAccounts(options = {}) {
+      const searchState = buildAccountSearchState(options);
+      const totalRow = db.prepare(`
+        SELECT COUNT(*) AS total
+        FROM x_accounts
+        ${searchState.whereClause}
+      `).get(searchState.sqlParams) || {};
+      const total = Number(totalRow.total || 0);
+      const totalPages = total > 0 ? Math.ceil(total / searchState.pageSize) : 0;
+      const page = totalPages > 0 ? Math.min(searchState.page, totalPages) : 1;
+      const offset = (page - 1) * searchState.pageSize;
+      const rows = db.prepare(`
+        SELECT *
+        FROM x_accounts
+        ${searchState.whereClause}
+        ORDER BY LOWER(username_display) ASC, id ASC
+        LIMIT @limit OFFSET @offset
+      `).all({
+        ...searchState.sqlParams,
+        limit: searchState.pageSize,
+        offset,
+      });
+
+      return {
+        accounts: rows.map((row) => toAccountRecord(row)),
+        pagination: {
+          page,
+          pageSize: searchState.pageSize,
+          total,
+          totalPages,
+          hasNextPage: totalPages > 0 && page < totalPages,
+          hasPreviousPage: page > 1,
+        },
+      };
     },
 
     getStats() {
