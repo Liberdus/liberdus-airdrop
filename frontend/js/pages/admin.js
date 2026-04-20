@@ -162,8 +162,10 @@ const els = {
   airdropTokenBalance: document.getElementById("airdropTokenBalance"),
   claimsBuilderForm: document.getElementById("claimsBuilderForm"),
   builderFileNameInput: document.getElementById("builderFileNameInput"),
+  builderUniformAmountInput: document.getElementById("builderUniformAmountInput"),
   addBuilderRowButton: document.getElementById("addBuilderRowButton"),
   clearBuilderButton: document.getElementById("clearBuilderButton"),
+  loadWalletAccountsButton: document.getElementById("loadWalletAccountsButton"),
   loadBuilderButton: document.getElementById("loadBuilderButton"),
   downloadBuilderButton: document.getElementById("downloadBuilderButton"),
   builderValidationMessage: document.getElementById("builderValidationMessage"),
@@ -294,6 +296,7 @@ function clearMessage() {
 const logger = { log: setMessage, clear: clearMessage };
 const reportError = createErrorReporter(logger.log, () => runtime);
 let pageInitPromise = Promise.resolve();
+const ADMIN_LINKED_WALLET_PAGE_SIZE = 200;
 const ADMIN_ACCOUNTS_TEMPLATE_CSV = [
   "x_username,wallet_address,x_user_id,is_follower,needs_recovery,snapshot_history_json",
   "example_user,0x0000000000000000000000000000000000000001,123456789,true,false,\"[\"\"2026-04-15T17:38:57.616Z\"\", \"\"2026-04-20T15:59:46.289Z\"\"]\"",
@@ -703,6 +706,130 @@ function downloadClaimsBuilderJson() {
   link.click();
   link.remove();
   URL.revokeObjectURL(downloadUrl);
+}
+
+async function fetchAllLinkedWalletAccounts() {
+  const accounts = [];
+  let page = 1;
+
+  while (true) {
+    const payload = await callAdminApi((accessToken) => fetchAdminAccounts(runtime.config, accessToken, {
+      page,
+      pageSize: ADMIN_LINKED_WALLET_PAGE_SIZE,
+      walletOnly: true,
+    }));
+
+    if (page === 1) {
+      applyManagementResponse(payload);
+      renderManagementSummary();
+    }
+
+    accounts.push(...(Array.isArray(payload?.accounts) ? payload.accounts : []));
+
+    if (!payload?.pagination?.hasNextPage) {
+      return {
+        accounts,
+        total: Number(payload?.pagination?.total || accounts.length),
+      };
+    }
+
+    page += 1;
+  }
+}
+
+function buildBuilderRowsFromLinkedWalletAccounts(accounts, amount) {
+  const rows = [];
+  const seenWallets = new Set();
+  let invalidCount = 0;
+  let duplicateCount = 0;
+
+  for (const account of accounts) {
+    const normalizedWallet = normalizeAddress(account?.walletAddress);
+    if (!normalizedWallet || normalizedWallet === ethers.ZeroAddress) {
+      invalidCount += 1;
+      continue;
+    }
+
+    if (seenWallets.has(normalizedWallet)) {
+      duplicateCount += 1;
+      continue;
+    }
+
+    seenWallets.add(normalizedWallet);
+    rows.push(createBuilderRow({
+      account: normalizedWallet,
+      amount,
+    }));
+  }
+
+  return {
+    rows,
+    invalidCount,
+    duplicateCount,
+  };
+}
+
+function formatLinkedWalletLoadMessage({ loadedCount, invalidCount = 0, duplicateCount = 0 }) {
+  const segments = [
+    `${loadedCount} linked ${loadedCount === 1 ? "wallet" : "wallets"} loaded`,
+  ];
+
+  if (invalidCount) {
+    segments.push(`${invalidCount} invalid skipped`);
+  }
+
+  if (duplicateCount) {
+    segments.push(`${duplicateCount} duplicate skipped`);
+  }
+
+  return `${segments.join("; ")}.`;
+}
+
+async function loadAllLinkedWalletClaimsIntoBuilder() {
+  const amount = String(els.builderUniformAmountInput?.value || "").trim();
+  if (!amount) {
+    throw new Error("Enter an amount to use for every linked wallet.");
+  }
+
+  try {
+    parseHumanAmount(amount, runtime.tokenDecimals);
+  } catch {
+    throw new Error("Enter a valid amount to use for every linked wallet.");
+  }
+
+  els.builderUniformAmountInput.value = amount;
+
+  const { accounts, total } = await fetchAllLinkedWalletAccounts();
+  if (!total) {
+    throw new Error("No accounts with saved wallets were found.");
+  }
+
+  const {
+    rows,
+    invalidCount,
+    duplicateCount,
+  } = buildBuilderRowsFromLinkedWalletAccounts(accounts, amount);
+
+  if (!rows.length) {
+    throw new Error("No valid linked wallets were found.");
+  }
+
+  runtime.builderRows = rows;
+  ensureClaimsBuilderFileName();
+  renderClaimsBuilderRows();
+
+  const artifact = buildClaimsBuilderArtifact();
+  if (!artifact) {
+    throw new Error("Unable to build claims from linked wallets.");
+  }
+
+  applyUploadedRound(artifact.round, { clearUploadInput: true });
+
+  return {
+    loadedCount: rows.length,
+    invalidCount,
+    duplicateCount,
+  };
 }
 
 function getEpochStatus(deadline) {
@@ -2102,6 +2229,22 @@ function bindEvents() {
   els.clearBuilderButton?.addEventListener("click", () => {
     resetClaimsBuilder({ preserveFileName: true });
     logger.log("Claims builder cleared.");
+  });
+
+  els.loadWalletAccountsButton?.addEventListener("click", async () => {
+    const originalLabel = els.loadWalletAccountsButton.textContent;
+    els.loadWalletAccountsButton.disabled = true;
+    els.loadWalletAccountsButton.textContent = "Loading...";
+
+    try {
+      const result = await loadAllLinkedWalletClaimsIntoBuilder();
+      logger.log(formatLinkedWalletLoadMessage(result), "success");
+    } catch (error) {
+      reportError(error, "Use all linked wallets");
+    } finally {
+      els.loadWalletAccountsButton.disabled = false;
+      els.loadWalletAccountsButton.textContent = originalLabel;
+    }
   });
 
   els.loadBuilderButton?.addEventListener("click", async () => {

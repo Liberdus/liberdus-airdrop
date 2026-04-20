@@ -40,6 +40,7 @@ const ADMIN_ROUND_SAVE_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const ADMIN_ACCESS_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const MAX_JSON_BODY_BYTES = 32 * 1024;
 const MAX_IMPORT_BODY_BYTES = 5 * 1024 * 1024;
+const MAX_AIRDROP_ROUND_SAVE_BODY_BYTES = 5 * 1024 * 1024;
 const RATE_LIMITS = {
   start: { limit: 12, windowMs: 10 * 60 * 1000 },
   callback: { limit: 24, windowMs: 10 * 60 * 1000 },
@@ -383,29 +384,58 @@ function redirect(response, location) {
 function readJsonRequest(request, maxBytes = MAX_JSON_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let rawBody = "";
+    let settled = false;
 
-    request.on("data", (chunk) => {
+    const cleanup = () => {
+      request.off("data", handleData);
+      request.off("end", handleEnd);
+      request.off("error", handleError);
+    };
+
+    const rejectOnce = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const resolveOnce = (value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const handleData = (chunk) => {
+      if (settled) return;
       rawBody += chunk;
       if (Buffer.byteLength(rawBody, "utf8") > maxBytes) {
-        reject(new HttpError(413, "Request body is too large."));
-        request.destroy();
+        rawBody = "";
+        rejectOnce(new HttpError(413, "Request body is too large."));
       }
-    });
+    };
 
-    request.on("end", () => {
+    const handleEnd = () => {
+      if (settled) return;
       if (!rawBody) {
-        resolve({});
+        resolveOnce({});
         return;
       }
 
       try {
-        resolve(JSON.parse(rawBody));
+        resolveOnce(JSON.parse(rawBody));
       } catch {
-        reject(new HttpError(400, "Request body must be valid JSON."));
+        rejectOnce(new HttpError(400, "Request body must be valid JSON."));
       }
-    });
+    };
 
-    request.on("error", reject);
+    const handleError = (error) => {
+      rejectOnce(error);
+    };
+
+    request.on("data", handleData);
+    request.on("end", handleEnd);
+    request.on("error", handleError);
   });
 }
 
@@ -1371,6 +1401,7 @@ function getAdminListOptions(requestUrl) {
     page: parsePositiveInteger(requestUrl.searchParams.get("page"), 1, { min: 1, max: 10000 }),
     pageSize: parsePositiveInteger(requestUrl.searchParams.get("pageSize"), 50, { min: 1, max: 200 }),
     search: String(requestUrl.searchParams.get("query") || "").trim(),
+    walletOnly: parseBooleanInput(requestUrl.searchParams.get("walletOnly")),
   };
 }
 
@@ -1695,7 +1726,7 @@ async function handleAdminDraftChallenge(request, response) {
 }
 
 async function handleSaveAirdropRound(request, response) {
-  const body = await readJsonRequest(request);
+  const body = await readJsonRequest(request, MAX_AIRDROP_ROUND_SAVE_BODY_BYTES);
   const rawClaims = Array.isArray(body.claims)
     ? body.claims
     : Array.isArray(body.round?.claims)

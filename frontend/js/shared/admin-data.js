@@ -95,6 +95,9 @@ export async function fetchAdminAccounts(config, accessToken, options = {}) {
   if (String(options.search || "").trim()) {
     url.searchParams.set("query", String(options.search || "").trim());
   }
+  if (options.walletOnly) {
+    url.searchParams.set("walletOnly", "true");
+  }
 
   return fetchJson(url, {
     headers: buildAdminHeaders(accessToken),
