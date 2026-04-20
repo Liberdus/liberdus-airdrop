@@ -262,48 +262,58 @@ export function createClaimConfettiController(canvas, {
     resize();
 
     const compact = state.cssWidth < 560 || window.matchMedia("(max-width: 780px)").matches;
-    const baseCount = compact ? 38 : 62;
-    const followupCount = compact ? 28 : 44;
-    const baseVelocity = compact ? 12.5 : 15.5;
-    const scalar = compact ? 0.92 : 1;
+    const baseCount = compact ? 56 : 90;
+    const followupCount = compact ? 40 : 65;
+    const baseVelocity = compact ? 15 : 18.5;
+    const scalar = compact ? 1 : 1.1;
 
     scheduleBurst({
       particleCount: baseCount,
       angle: 308,
-      spread: 34,
+      spread: 46,
       startVelocity: baseVelocity,
       origin: { x: 0.06, y: 0.05 },
-      ticks: compact ? 88 : 98,
+      ticks: compact ? 105 : 115,
       scalar,
     });
 
     scheduleBurst({
       particleCount: baseCount,
       angle: 232,
-      spread: 34,
+      spread: 46,
       startVelocity: baseVelocity,
       origin: { x: 0.94, y: 0.05 },
-      ticks: compact ? 88 : 98,
+      ticks: compact ? 105 : 115,
       scalar,
     }, 70);
 
     scheduleBurst({
+      particleCount: compact ? 34 : 52,
+      angle: 270,
+      spread: 30,
+      startVelocity: baseVelocity + 1,
+      origin: { x: 0.5, y: 0.03 },
+      ticks: compact ? 98 : 108,
+      scalar: scalar * 1.02,
+    }, 110);
+
+    scheduleBurst({
       particleCount: followupCount,
       angle: 300,
-      spread: 28,
+      spread: 40,
       startVelocity: baseVelocity - 1,
       origin: { x: 0.1, y: 0.09 },
-      ticks: compact ? 82 : 92,
+      ticks: compact ? 98 : 108,
       scalar: scalar * 0.96,
     }, 150);
 
     scheduleBurst({
       particleCount: followupCount,
       angle: 240,
-      spread: 28,
+      spread: 40,
       startVelocity: baseVelocity - 1,
       origin: { x: 0.9, y: 0.09 },
-      ticks: compact ? 82 : 92,
+      ticks: compact ? 98 : 108,
       scalar: scalar * 0.96,
     }, 220);
   };
