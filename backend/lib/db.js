@@ -4,7 +4,7 @@ const path = require("node:path");
 const Database = require("better-sqlite3");
 
 const DEFAULT_DB_PATH = path.join("data", "liberdus.sqlite");
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 function getRepoRoot() {
   return path.resolve(__dirname, "..", "..");
 }
@@ -100,6 +100,10 @@ function createAirdropSchema(db) {
       start_tx_hash TEXT,
       start_block_number INTEGER,
       start_block_hash TEXT,
+      claimed_count INTEGER NOT NULL DEFAULT 0,
+      claimed_amount_raw TEXT NOT NULL DEFAULT '0',
+      claims_synced_through_block INTEGER,
+      claims_last_reconciled_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -127,6 +131,9 @@ function createAirdropSchema(db) {
       proof_json TEXT NOT NULL,
       claimed_at TEXT,
       claimed_tx_hash TEXT,
+      claimed_block_number INTEGER,
+      claimed_block_hash TEXT,
+      claimed_log_index INTEGER,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -142,6 +149,9 @@ function createAirdropSchema(db) {
 
     CREATE INDEX IF NOT EXISTS idx_airdrop_claims_round_lookup
       ON airdrop_claims(round_id, claim_index, id);
+
+    CREATE INDEX IF NOT EXISTS idx_airdrop_claims_round_claimed_block
+      ON airdrop_claims(round_id, claimed_block_number);
   `);
 }
 
@@ -164,6 +174,7 @@ function dropKnownTablesAndIndexes(db) {
     DROP INDEX IF EXISTS idx_airdrop_claims_round_wallet;
     DROP INDEX IF EXISTS idx_airdrop_claims_wallet_lookup;
     DROP INDEX IF EXISTS idx_airdrop_claims_round_lookup;
+    DROP INDEX IF EXISTS idx_airdrop_claims_round_claimed_block;
     DROP TABLE IF EXISTS airdrop_claims;
     DROP TABLE IF EXISTS airdrop_rounds;
     DROP TABLE IF EXISTS airdrop_claims_legacy;
@@ -217,8 +228,12 @@ function hasCurrentSchema(db) {
     && tableNames.includes("airdrop_claims")
     && airdropRoundColumns.includes("deployment_key")
     && airdropRoundColumns.includes("status")
+    && airdropRoundColumns.includes("claimed_amount_raw")
+    && airdropRoundColumns.includes("claims_synced_through_block")
     && airdropClaimColumns.includes("id")
-    && airdropClaimColumns.includes("updated_at");
+    && airdropClaimColumns.includes("updated_at")
+    && airdropClaimColumns.includes("claimed_block_number")
+    && airdropClaimColumns.includes("claimed_log_index");
 }
 
 function resetToCurrentSchema(db) {
@@ -329,6 +344,77 @@ function migrateAirdropSchemaV2(db) {
   `);
 }
 
+function backfillAirdropClaimRollups(db) {
+  const roundIds = db.prepare(`
+    SELECT id
+    FROM airdrop_rounds
+  `).all().map((row) => Number(row.id));
+  const listClaimedRows = db.prepare(`
+    SELECT amount_raw
+    FROM airdrop_claims
+    WHERE round_id = ?
+      AND claimed_tx_hash IS NOT NULL
+  `);
+  const updateRound = db.prepare(`
+    UPDATE airdrop_rounds
+    SET claimed_count = ?,
+        claimed_amount_raw = ?
+    WHERE id = ?
+  `);
+
+  for (const roundId of roundIds) {
+    const claimedRows = listClaimedRows.all(roundId);
+    const claimedCount = claimedRows.length;
+    const claimedAmountRaw = claimedRows
+      .reduce((total, row) => total + BigInt(String(row.amount_raw || "0")), 0n)
+      .toString();
+    updateRound.run(claimedCount, claimedAmountRaw, roundId);
+  }
+}
+
+function migrateAirdropSchemaV3(db) {
+  const roundColumns = getTableColumnNames(db, "airdrop_rounds");
+  const claimColumns = getTableColumnNames(db, "airdrop_claims");
+
+  const roundAlterations = [];
+  if (!roundColumns.includes("claimed_count")) {
+    roundAlterations.push(`ALTER TABLE airdrop_rounds ADD COLUMN claimed_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!roundColumns.includes("claimed_amount_raw")) {
+    roundAlterations.push(`ALTER TABLE airdrop_rounds ADD COLUMN claimed_amount_raw TEXT NOT NULL DEFAULT '0'`);
+  }
+  if (!roundColumns.includes("claims_synced_through_block")) {
+    roundAlterations.push(`ALTER TABLE airdrop_rounds ADD COLUMN claims_synced_through_block INTEGER`);
+  }
+  if (!roundColumns.includes("claims_last_reconciled_at")) {
+    roundAlterations.push(`ALTER TABLE airdrop_rounds ADD COLUMN claims_last_reconciled_at TEXT`);
+  }
+
+  const claimAlterations = [];
+  if (!claimColumns.includes("claimed_block_number")) {
+    claimAlterations.push(`ALTER TABLE airdrop_claims ADD COLUMN claimed_block_number INTEGER`);
+  }
+  if (!claimColumns.includes("claimed_block_hash")) {
+    claimAlterations.push(`ALTER TABLE airdrop_claims ADD COLUMN claimed_block_hash TEXT`);
+  }
+  if (!claimColumns.includes("claimed_log_index")) {
+    claimAlterations.push(`ALTER TABLE airdrop_claims ADD COLUMN claimed_log_index INTEGER`);
+  }
+
+  for (const statement of [...roundAlterations, ...claimAlterations]) {
+    db.exec(statement);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_airdrop_claims_round_claimed_block
+      ON airdrop_claims(round_id, claimed_block_number);
+  `);
+
+  if (roundAlterations.length) {
+    backfillAirdropClaimRollups(db);
+  }
+}
+
 function migrateSchema(db) {
   if (hasCurrentSchema(db)) {
     setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
@@ -356,6 +442,7 @@ function migrateSchema(db) {
   }
 
   migrateAirdropSchemaV2(db);
+  migrateAirdropSchemaV3(db);
   setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
 }
 

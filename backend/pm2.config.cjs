@@ -18,5 +18,19 @@ module.exports = {
         NODE_ENV: process.env.NODE_ENV || "production",
       },
     },
+    {
+      name: process.env.PM2_CLAIM_SYNC_APP_NAME || "liberdus-airdrop-claim-sync",
+      cwd: repoRoot,
+      script: path.join(repoRoot, "backend", "claim-sync-worker.js"),
+      interpreter: "node",
+      exec_mode: "fork",
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: "192M",
+      env: {
+        NODE_ENV: process.env.NODE_ENV || "production",
+      },
+    },
   ],
 };

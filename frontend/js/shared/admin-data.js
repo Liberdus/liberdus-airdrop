@@ -134,6 +134,21 @@ export async function saveAdminAccount(config, accessToken, payload) {
   });
 }
 
+export async function reconcileAdminAirdropClaims(config, accessToken) {
+  const backendBaseUrl = getBackendBaseUrl(config);
+  if (!backendBaseUrl) {
+    throw new Error("Backend API URL is not configured.");
+  }
+
+  return fetchJson(`${backendBaseUrl}/api/admin/airdrop-claims/reconcile`, {
+    method: "POST",
+    headers: buildAdminHeaders(accessToken, {
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({}),
+  });
+}
+
 export async function fetchAdminRecoverySubmissions(config, accessToken, options = {}) {
   const backendBaseUrl = getBackendBaseUrl(config);
   if (!backendBaseUrl) {
