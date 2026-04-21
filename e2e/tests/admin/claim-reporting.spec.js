@@ -40,7 +40,7 @@ test("admin can reconcile mirrored claims and surface them across the reporting 
   await page.getByRole("button", { name: "Reconcile Claims" }).click();
   await expect(page.locator("#adminToastMessage")).toContainText("Claims reconciled:");
   await expect(page.locator("#adminClaimedTotal")).toHaveText("125 LIB");
-  await expect(page.locator("#claimSyncStatus")).toContainText("Claim sync last ran");
+  await expect(page.locator("#claimSyncStatus")).toContainText("Last reconciled");
 
   await page.getByRole("button", { name: "Rounds", exact: true }).click();
   await page.getByRole("button", { name: "View Claims" }).first().click();
