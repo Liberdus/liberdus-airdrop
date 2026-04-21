@@ -1372,8 +1372,8 @@ function renderSelectedRoundClaims() {
   els.selectedRoundMeta.textContent = selectedRound.status === "draft"
     ? "Claim indexes match the contract leaf indexes. Claim sync only applies after deployment."
     : (selectedRound.claimsLastReconciledAt
-      ? `Claim status comes from the backend sync worker. Last reconciled ${formatManagementDateTime(selectedRound.claimsLastReconciledAt)}.`
-      : "Claim status comes from the backend sync worker. Claims have not been reconciled yet for this round.");
+      ? `Claim status comes from manual backend reconciliation. Last reconciled ${formatManagementDateTime(selectedRound.claimsLastReconciledAt)}.`
+      : "Claim status comes from manual backend reconciliation. Claims have not been reconciled yet for this round.");
   els.selectedRoundClaimCount.textContent = claimCount === 1 ? "1 claim" : `${claimCount} claims`;
   els.selectedRoundTotal.textContent = formatTokenAmount(
     BigInt(selectedRound.totalAmountRaw),
@@ -1435,10 +1435,10 @@ function renderManagementSummary() {
 
 function formatClaimSyncStatus() {
   if (!runtime.claimSyncSummary?.claimsLastReconciledAt) {
-    return "Claim sync has not run yet.";
+    return "Claims have not been reconciled yet.";
   }
 
-  return `Claim sync last ran ${formatManagementDateTime(runtime.claimSyncSummary.claimsLastReconciledAt)}.`;
+  return `Last reconciled ${formatManagementDateTime(runtime.claimSyncSummary.claimsLastReconciledAt)}.`;
 }
 
 function renderClaimSyncSummary() {
