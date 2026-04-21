@@ -42,6 +42,7 @@ import {
   completeAdminAccess,
   fetchAdminAccounts,
   importAdminAccounts,
+  reconcileAdminAirdropClaims,
   saveAdminAccount,
   fetchAdminRecoverySubmissions,
   importAdminRecoverySubmissions,
@@ -98,6 +99,11 @@ const runtime = {
     latestSnapshotCapturedAt: null,
     recoverySubmissionCount: 0,
   },
+  claimSyncSummary: {
+    totalClaimedCount: 0,
+    totalClaimedAmountRaw: "0",
+    claimsLastReconciledAt: null,
+  },
   accountsRows: [],
   accountsPagination: {
     page: 1,
@@ -126,6 +132,9 @@ const runtime = {
 const els = {
   adminHeader: document.getElementById("adminHeader"),
   refreshButton: document.getElementById("refreshButton"),
+  reconcileClaimsButton: document.getElementById("reconcileClaimsButton"),
+  claimSyncStatus: document.getElementById("claimSyncStatus"),
+  adminClaimedTotal: document.getElementById("adminClaimedTotal"),
   connectButton: document.getElementById("connectButton"),
   walletMenu: document.getElementById("walletMenu"),
   walletMenuAddress: document.getElementById("walletMenuAddress"),
@@ -202,7 +211,6 @@ const els = {
   recoverAmount: document.getElementById("recoverAmount"),
   epochListBody: document.getElementById("epochListBody"),
   roundClaimsSection: document.getElementById("roundClaimsSection"),
-  refreshRoundClaimsStatusButton: document.getElementById("refreshRoundClaimsStatusButton"),
   selectedRoundLabel: document.getElementById("selectedRoundLabel"),
   selectedRoundMeta: document.getElementById("selectedRoundMeta"),
   selectedRoundClaimCount: document.getElementById("selectedRoundClaimCount"),
@@ -405,6 +413,21 @@ function renderExplorerAddress(address) {
   }
 
   return `<a class="table-address-link" href="${explorerUrl}" target="_blank" rel="noreferrer noopener">${codeLabel}</a>`;
+}
+
+function renderTokenSummary(symbol, tokenAddress) {
+  const normalizedSymbol = String(symbol || "").trim();
+  if (!normalizedSymbol) {
+    return "-";
+  }
+
+  const explorerUrl = getExplorerAddressUrl(tokenAddress);
+  const label = escapeHtml(normalizedSymbol);
+  if (!explorerUrl) {
+    return label;
+  }
+
+  return `<a class="table-address-link" href="${explorerUrl}" target="_blank" rel="noreferrer noopener">${label}</a>`;
 }
 
 function resetAdminAccess() {
@@ -1151,12 +1174,22 @@ async function refreshStoredRounds() {
   runtime.storedRounds = [];
   runtime.storedRoundsByEpoch = new Map();
   runtime.storedRoundsByRoot = new Map();
+  runtime.claimSyncSummary = {
+    totalClaimedCount: 0,
+    totalClaimedAmountRaw: "0",
+    claimsLastReconciledAt: null,
+  };
 
   if (!isClaimsApiConfigured(runtime.config)) return;
 
   const payload = await fetchStoredAirdropRounds(runtime.config);
   const rounds = Array.isArray(payload?.rounds) ? payload.rounds : [];
   runtime.storedRounds = rounds;
+  runtime.claimSyncSummary = {
+    totalClaimedCount: Number(payload?.summary?.totalClaimedCount || 0),
+    totalClaimedAmountRaw: String(payload?.summary?.totalClaimedAmountRaw || "0"),
+    claimsLastReconciledAt: payload?.summary?.claimsLastReconciledAt || null,
+  };
 
   for (const round of rounds) {
     if (round.status === "deployed" && Number.isInteger(round.epoch)) {
@@ -1263,7 +1296,9 @@ function buildRoundRows() {
       label: `Epoch ${chainRow.epoch}`,
       root: chainRow.root,
       deadline: Number(chainRow.deadline || 0),
-      claimedAmount: chainRow.claimedAmount,
+      claimedAmount: matchesStoredRound
+        ? BigInt(storedRound.claimedAmountRaw || "0")
+        : chainRow.claimedAmount,
       totalAmountRaw: matchesStoredRound ? BigInt(storedRound.totalAmountRaw) : chainRow.totalAmountRaw,
       sourceText: matchesStoredRound ? "DB + Chain" : "Chain only",
       canFundTotal: matchesStoredRound,
@@ -1284,7 +1319,7 @@ function buildRoundRows() {
       label: formatStoredRoundLabel(round),
       root: round.merkleRoot,
       deadline: Number(round.deadline || 0),
-      claimedAmount: null,
+      claimedAmount: BigInt(round.claimedAmountRaw || "0"),
       totalAmountRaw: BigInt(round.totalAmountRaw),
       sourceText: "DB only",
       canFundTotal: true,
@@ -1297,19 +1332,19 @@ function buildRoundRows() {
 }
 
 function formatClaimState(record) {
-  if (record.claimed === true || record.entry?.claimedAt || record.entry?.claimedTxHash) {
+  if (record.entry?.claimedAt || record.entry?.claimedTxHash) {
     return "Claimed";
-  }
-
-  if (record.claimed === false) {
-    return "Unclaimed";
   }
 
   if (record.round?.status === "draft") {
     return "Draft";
   }
 
-  return "Unknown";
+  if (record.round?.claimsLastReconciledAt) {
+    return "Unclaimed";
+  }
+
+  return "Not synced";
 }
 
 function renderSelectedRoundClaims() {
@@ -1320,7 +1355,6 @@ function renderSelectedRoundClaims() {
     els.selectedRoundClaimCount.textContent = "-";
     els.selectedRoundTotal.textContent = "-";
     els.roundClaimsBody.innerHTML = '<tr><td colspan="5" class="empty-row">Select a stored round to view its claims.</td></tr>';
-    els.refreshRoundClaimsStatusButton.disabled = true;
     return;
   }
 
@@ -1336,15 +1370,16 @@ function renderSelectedRoundClaims() {
   els.selectedRoundLabel.textContent = formatSelectedRoundLabel(selectedRound);
   els.selectedRoundLabel.title = selectedRound.merkleRoot || formatStoredRoundLabel(selectedRound);
   els.selectedRoundMeta.textContent = selectedRound.status === "draft"
-    ? "Claim indexes match the contract leaf indexes. Claimed status is only available after deployment."
-    : "Claim indexes match the contract leaf indexes. Use Load Claimed Status to query the contract for this round.";
+    ? "Claim indexes match the contract leaf indexes. Claim sync only applies after deployment."
+    : (selectedRound.claimsLastReconciledAt
+      ? `Claim status comes from manual backend reconciliation. Last reconciled ${formatManagementDateTime(selectedRound.claimsLastReconciledAt)}.`
+      : "Claim status comes from manual backend reconciliation. Claims have not been reconciled yet for this round.");
   els.selectedRoundClaimCount.textContent = claimCount === 1 ? "1 claim" : `${claimCount} claims`;
   els.selectedRoundTotal.textContent = formatTokenAmount(
     BigInt(selectedRound.totalAmountRaw),
     runtime.tokenDecimals,
     runtime.tokenSymbol,
   );
-  els.refreshRoundClaimsStatusButton.disabled = !(selectedRound.status === "deployed" && claimCount > 0);
 
   if (!claimCount) {
     els.roundClaimsBody.innerHTML = '<tr><td colspan="5" class="empty-row">No claims were found for this round.</td></tr>';
@@ -1398,6 +1433,23 @@ function renderManagementSummary() {
     : "-";
 }
 
+function formatClaimSyncStatus() {
+  if (!runtime.claimSyncSummary?.claimsLastReconciledAt) {
+    return "Claims have not been reconciled yet.";
+  }
+
+  return `Last reconciled ${formatManagementDateTime(runtime.claimSyncSummary.claimsLastReconciledAt)}.`;
+}
+
+function renderClaimSyncSummary() {
+  els.adminClaimedTotal.textContent = formatTokenAmount(
+    BigInt(runtime.claimSyncSummary?.totalClaimedAmountRaw || "0"),
+    runtime.tokenDecimals,
+    runtime.tokenSymbol,
+  );
+  els.claimSyncStatus.textContent = formatClaimSyncStatus();
+}
+
 function renderAccountsPagination() {
   els.accountsPaginationLabel.textContent = formatPaginationLabel(
     runtime.accountsPagination,
@@ -1412,7 +1464,7 @@ function renderAccountsTable() {
   renderAccountsPagination();
 
   if (!runtime.accountsRows.length) {
-    els.accountsTableBody.innerHTML = '<tr><td colspan="8" class="empty-row">No matching accounts were found.</td></tr>';
+    els.accountsTableBody.innerHTML = '<tr><td colspan="9" class="empty-row">No matching accounts were found.</td></tr>';
     return;
   }
 
@@ -1422,6 +1474,12 @@ function renderAccountsTable() {
         <td><strong>${escapeHtml(account.username || "-")}</strong></td>
         <td>${escapeHtml(account.xUserId || "-")}</td>
         <td>${renderExplorerAddress(account.walletAddress)}</td>
+        <td>
+          <div class="management-meta-stack">
+            <strong>${formatTokenAmount(BigInt(account.totalClaimedAmountRaw || "0"), runtime.tokenDecimals, runtime.tokenSymbol)}</strong>
+            <span>${Number(account.claimedRoundCount || 0)} claimed ${Number(account.claimedRoundCount || 0) === 1 ? "round" : "rounds"}</span>
+          </div>
+        </td>
         <td>${escapeHtml(account.walletSource || "-")}</td>
         <td>${createFlagBadge(account.isFollower)}</td>
         <td>${createFlagBadge(account.needsRecovery, { positiveLabel: "Needs action", negativeLabel: "Clear" })}</td>
@@ -1819,9 +1877,7 @@ async function refreshPage() {
     runtime.tokenDecimals = snapshot.tokenDecimals ?? runtime.tokenDecimals;
 
     els.currentEpoch.textContent = snapshot.currentEpoch?.toString() || "-";
-    els.tokenSummary.textContent = snapshot.tokenSymbol
-      ? `${snapshot.tokenSymbol} (${runtime.tokenDecimals} decimals)`
-      : "-";
+    els.tokenSummary.innerHTML = renderTokenSummary(snapshot.tokenSymbol, runtime.config.tokenAddress);
     els.walletTokenBalance.textContent = snapshot.walletTokenBalance != null
       ? formatTokenAmount(snapshot.walletTokenBalance, runtime.tokenDecimals, runtime.tokenSymbol)
       : "-";
@@ -1864,6 +1920,71 @@ async function refreshPage() {
   if (runtime.activeAdminTab === "accounts" && isOwner()) {
     await refreshAccountManagementData();
   }
+
+  renderClaimSyncSummary();
+}
+
+function formatClaimReconcileMessage(summary) {
+  const appliedCount = Number(summary?.appliedCount || 0);
+  const clearedCount = Number(summary?.clearedCount || 0);
+  const mismatchCount = Number(summary?.mismatchCount || 0);
+  const missingClaimCount = Number(summary?.missingClaimCount || 0);
+  const segments = [
+    `${appliedCount} applied`,
+  ];
+
+  if (clearedCount) {
+    segments.push(`${clearedCount} cleared`);
+  }
+  if (missingClaimCount) {
+    segments.push(`${missingClaimCount} missing`);
+  }
+  if (mismatchCount) {
+    segments.push(`${mismatchCount} mismatches`);
+  }
+
+  return `Claims reconciled: ${segments.join(", ")}.`;
+}
+
+async function refreshClaimLookupResults() {
+  const walletAddress = String(els.claimLookupInput?.value || "").trim();
+  if (!walletAddress || !isClaimsApiConfigured(runtime.config)) {
+    if (!walletAddress) {
+      runtime.claimLookupRows = [];
+      renderClaimLookupResults();
+    }
+    return;
+  }
+
+  const payload = await fetchStoredClaimsByWallet(runtime.config, walletAddress);
+  runtime.claimLookupRows = Array.isArray(payload?.claims) ? payload.claims : [];
+  renderClaimLookupResults();
+}
+
+async function reconcileClaimMirror() {
+  const selectedRoundId = runtime.selectedRoundId;
+  const currentLookupValue = String(els.claimLookupInput?.value || "").trim();
+  const response = await callAdminApi((accessToken) => reconcileAdminAirdropClaims(runtime.config, accessToken));
+
+  if (response?.claimSummary) {
+    runtime.claimSyncSummary = {
+      totalClaimedCount: Number(response.claimSummary.totalClaimedCount || 0),
+      totalClaimedAmountRaw: String(response.claimSummary.totalClaimedAmountRaw || "0"),
+      claimsLastReconciledAt: response.claimSummary.claimsLastReconciledAt || null,
+    };
+  }
+
+  await refreshPage();
+
+  if (selectedRoundId) {
+    await loadRoundClaims(selectedRoundId);
+  }
+
+  if (currentLookupValue) {
+    await refreshClaimLookupResults();
+  }
+
+  logger.log(formatClaimReconcileMessage(response?.summary), "success");
 }
 
 async function acceptOwnershipTransaction() {
@@ -1915,32 +2036,6 @@ async function fundStoredRoundTotal(roundId) {
   await fundAirdropAmountRaw(BigInt(storedRound.totalAmountRaw));
 }
 
-async function loadClaimStatuses(records) {
-  if (!Array.isArray(records) || !records.length || !runtime.provider) {
-    return records || [];
-  }
-
-  const { airdrop } = getContracts({ config: runtime.config, provider: runtime.provider });
-  if (!airdrop) {
-    return records;
-  }
-
-  return Promise.all(
-    records.map(async (record) => {
-      if (record?.round?.status !== "deployed" || record?.round?.epoch == null || !record?.entry?.index) {
-        return { ...record, claimed: null };
-      }
-
-      try {
-        const claimed = await airdrop.isClaimed(BigInt(record.round.epoch), BigInt(record.entry.index));
-        return { ...record, claimed };
-      } catch {
-        return { ...record, claimed: null };
-      }
-    }),
-  );
-}
-
 async function loadRoundClaims(roundId, { scrollIntoView = false } = {}) {
   if (!isClaimsApiConfigured(runtime.config)) {
     throw new Error("Backend API URL is not configured.");
@@ -1948,23 +2043,12 @@ async function loadRoundClaims(roundId, { scrollIntoView = false } = {}) {
 
   const payload = await fetchStoredRoundClaims(runtime.config, roundId);
   runtime.selectedRoundId = Number(roundId);
-  runtime.selectedRoundClaims = Array.isArray(payload?.claims)
-    ? payload.claims.map((record) => ({
-      ...record,
-      claimed: record?.entry?.claimedAt || record?.entry?.claimedTxHash ? true : null,
-    }))
-    : [];
+  runtime.selectedRoundClaims = Array.isArray(payload?.claims) ? payload.claims : [];
   setAdminTab("rounds");
   renderSelectedRoundClaims();
   if (scrollIntoView) {
     scrollRoundClaimsSectionIntoView();
   }
-}
-
-async function refreshSelectedRoundClaimStatuses() {
-  if (!runtime.selectedRoundClaims.length) return;
-  runtime.selectedRoundClaims = await loadClaimStatuses(runtime.selectedRoundClaims);
-  renderSelectedRoundClaims();
 }
 
 async function saveDraftRoundToBackend() {
@@ -2168,12 +2252,11 @@ function bindEvents() {
     }
   });
 
-  els.refreshRoundClaimsStatusButton?.addEventListener("click", async () => {
+  els.reconcileClaimsButton?.addEventListener("click", async () => {
     try {
-      await refreshSelectedRoundClaimStatuses();
-      logger.log("Claimed status refreshed.", "success");
+      await reconcileClaimMirror();
     } catch (error) {
-      reportError(error, "Refresh claimed status");
+      reportError(error, "Reconcile claims");
     }
   });
 
@@ -2491,12 +2574,7 @@ function bindEvents() {
       const payload = await fetchStoredClaimsByWallet(runtime.config, rawQuery);
       const rows = Array.isArray(payload?.claims) ? payload.claims : [];
 
-      runtime.claimLookupRows = await loadClaimStatuses(
-        rows.map((record) => ({
-          ...record,
-          claimed: record?.entry?.claimedAt || record?.entry?.claimedTxHash ? true : null,
-        })),
-      );
+      runtime.claimLookupRows = rows;
       renderClaimLookupResults();
     } catch (error) {
       runtime.claimLookupRows = [];
@@ -2741,6 +2819,7 @@ async function init() {
   bindEvents();
   updateToastOffset();
   renderManagementSummary();
+  renderClaimSyncSummary();
   renderAccountsTable();
   renderRecoverySubmissionsTable();
   renderSelectedRoundClaims();

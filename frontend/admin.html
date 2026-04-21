@@ -114,12 +114,18 @@
 
       <div id="adminShell" hidden>
         <section class="frame admin-tabs-shell">
-          <div class="panel-title-row">
+          <div class="panel-title-row admin-workspace-header">
             <div>
               <h2>Admin Workspace</h2>
               <p class="hint">Save rounds to the database first, then deploy them from the rounds tab when you are ready. Drafts do not reserve an epoch.</p>
             </div>
-            <button id="refreshButton" type="button" class="ghost">Refresh</button>
+            <div class="workspace-header-actions">
+              <div class="button-row workspace-header-buttons">
+                <button id="reconcileClaimsButton" type="button" class="secondary">Reconcile Claims</button>
+                <button id="refreshButton" type="button" class="ghost">Refresh</button>
+              </div>
+              <p id="claimSyncStatus" class="hint claim-sync-status">Claims have not been reconciled yet.</p>
+            </div>
           </div>
 
           <div class="detail-list admin-summary-list">
@@ -138,6 +144,10 @@
             <article class="detail-item">
               <h3>Airdrop LIB</h3>
               <p id="airdropTokenBalance">-</p>
+            </article>
+            <article class="detail-item">
+              <h3>Claimed LIB</h3>
+              <p id="adminClaimedTotal">-</p>
             </article>
           </div>
 
@@ -321,7 +331,6 @@
                 <h2>Round Claims</h2>
                 <p id="selectedRoundMeta" class="hint">Choose a stored round to inspect its claim entries.</p>
               </div>
-              <button id="refreshRoundClaimsStatusButton" type="button" class="ghost" disabled>Load Claimed Status</button>
             </div>
 
             <div class="detail-list builder-summary-list">
@@ -574,6 +583,7 @@
                     <th>Username</th>
                     <th>X User ID</th>
                     <th>Wallet</th>
+                    <th>Claims</th>
                     <th>Source</th>
                     <th>Follower</th>
                     <th>Recovery</th>
@@ -582,7 +592,7 @@
                   </tr>
                 </thead>
                 <tbody id="accountsTableBody">
-                  <tr><td colspan="8" class="empty-row">Open this tab to load accounts.</td></tr>
+                  <tr><td colspan="9" class="empty-row">Open this tab to load accounts.</td></tr>
                 </tbody>
               </table>
             </div>
