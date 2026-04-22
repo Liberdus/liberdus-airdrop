@@ -10,7 +10,6 @@ const { loadAppConfig, requireChainConfig } = require("./lib/app-config");
 const { buildClaimRound } = require("./lib/claim-round");
 const { createAirdropRoundStore } = require("./lib/airdrop-round-store");
 const { fetchAirdropOwner, verifyAirdropStartTransaction } = require("./lib/airdrop-chain");
-const { createClaimSyncService } = require("./lib/claim-sync");
 const { createAccountStore } = require("./lib/x-account-store");
 const { createRecoverySubmissionStore } = require("./lib/recovery-submission-store");
 
@@ -58,7 +57,6 @@ const RATE_LIMITS = {
   adminAccountsRead: { limit: 120, windowMs: 60 * 1000 },
   adminAccountsImport: { limit: 20, windowMs: 10 * 60 * 1000 },
   adminAccountsWrite: { limit: 40, windowMs: 10 * 60 * 1000 },
-  adminClaimReconcile: { limit: 10, windowMs: 10 * 60 * 1000 },
   adminSubmissionsRead: { limit: 120, windowMs: 60 * 1000 },
   adminSubmissionsImport: { limit: 20, windowMs: 10 * 60 * 1000 },
   adminSubmissionsExport: { limit: 20, windowMs: 10 * 60 * 1000 },
@@ -219,27 +217,6 @@ const db = openDatabase();
 const accountStore = createAccountStore(db);
 const recoverySubmissionStore = createRecoverySubmissionStore(db);
 const airdropRoundStore = createAirdropRoundStore(db);
-let claimSyncService = null;
-
-try {
-  claimSyncService = createClaimSyncService({
-    appConfig,
-    airdropRoundStore,
-    logger: {
-      info(message) {
-        console.log(`[claim-sync][server] ${message}`);
-      },
-      warn(message) {
-        console.warn(`[claim-sync][server] ${message}`);
-      },
-      error(message) {
-        console.error(`[claim-sync][server] ${message}`);
-      },
-    },
-  });
-} catch (error) {
-  console.warn(`[claim-sync][server] disabled: ${error?.message || error}`);
-}
 
 function createRandomToken(bytes = 32) {
   return crypto.randomBytes(bytes).toString("hex");
@@ -936,8 +913,6 @@ function serializeAdminAccount(account) {
 
   return {
     ...serializeAccountForClient(account),
-    claimedRoundCount: Number(account.claimedRoundCount || 0),
-    totalClaimedAmountRaw: String(account.totalClaimedAmountRaw || "0"),
     xAccountCreatedAt: account.xAccountCreatedAt || null,
     latestSnapshotCapturedAt: account.latestSnapshotCapturedAt || null,
     createdAt: account.createdAt || null,
@@ -987,12 +962,6 @@ function serializeAirdropRoundSummary(round) {
     startTxHash: String(round.startTxHash || "").trim(),
     startBlockNumber: round.startBlockNumber == null ? null : Number(round.startBlockNumber),
     startBlockHash: String(round.startBlockHash || "").trim(),
-    claimedCount: Number(round.claimedCount || 0),
-    claimedAmountRaw: String(round.claimedAmountRaw || "0"),
-    claimsSyncedThroughBlock: round.claimsSyncedThroughBlock == null
-      ? null
-      : Number(round.claimsSyncedThroughBlock),
-    claimsLastReconciledAt: String(round.claimsLastReconciledAt || "").trim() || null,
     createdAt: String(round.createdAt || "").trim(),
     updatedAt: String(round.updatedAt || "").trim(),
   };
@@ -1010,9 +979,6 @@ function serializeAirdropClaimEntry(entry) {
     usernameDisplay: String(entry.usernameDisplay || "").trim() || null,
     claimedAt: entry.claimedAt || null,
     claimedTxHash: String(entry.claimedTxHash || "").trim() || null,
-    claimedBlockNumber: entry.claimedBlockNumber == null ? null : Number(entry.claimedBlockNumber),
-    claimedBlockHash: String(entry.claimedBlockHash || "").trim() || null,
-    claimedLogIndex: entry.claimedLogIndex == null ? null : Number(entry.claimedLogIndex),
     createdAt: entry.createdAt || null,
     updatedAt: entry.updatedAt || null,
   };
@@ -1339,11 +1305,9 @@ async function handleWalletClaimsLookup(request, response, walletAddress) {
 }
 
 async function handleRoundsLookup(response) {
-  const deploymentKey = getRequiredDeploymentKey();
-  const rounds = airdropRoundStore.listRounds(deploymentKey);
+  const rounds = airdropRoundStore.listRounds(getRequiredDeploymentKey());
   writeJson(response, 200, {
     rounds: rounds.map((round) => serializeAirdropRoundSummary(round)),
-    summary: airdropRoundStore.getClaimSyncSummary(deploymentKey),
   });
 }
 
@@ -1444,44 +1408,11 @@ function getAdminListOptions(requestUrl) {
 async function handleAdminAccountsLookup(request, response, requestUrl) {
   getRequiredAdminAccessSession(request);
   const result = accountStore.listAccounts(getAdminListOptions(requestUrl));
-  const deploymentKey = String(appConfig.deploymentKey || "").trim();
-  const walletClaimSummaries = deploymentKey
-    ? airdropRoundStore.getWalletClaimSummaries(
-      result.accounts.map((account) => account.walletAddress).filter(Boolean),
-      deploymentKey,
-    )
-    : new Map();
 
   writeJson(response, 200, {
     summary: buildAdminSummary(),
     pagination: result.pagination,
-    accounts: result.accounts.map((account) => {
-      const summary = account.walletAddress
-        ? walletClaimSummaries.get(String(account.walletAddress || "").trim().toLowerCase()) || null
-        : null;
-      return serializeAdminAccount({
-        ...account,
-        claimedRoundCount: Number(summary?.claimedCount || 0),
-        totalClaimedAmountRaw: String(summary?.totalClaimedAmountRaw || "0"),
-      });
-    }),
-  });
-}
-
-async function handleAdminClaimReconcile(request, response) {
-  getRequiredAdminAccessSession(request);
-  if (!claimSyncService) {
-    throw new HttpError(503, "Claim sync is not configured on this server.");
-  }
-
-  const summary = await claimSyncService.reconcileDeployment({
-    reason: "admin",
-  });
-  const deploymentKey = getRequiredDeploymentKey();
-
-  writeJson(response, 200, {
-    summary,
-    claimSummary: airdropRoundStore.getClaimSyncSummary(deploymentKey),
+    accounts: result.accounts.map((account) => serializeAdminAccount(account)),
   });
 }
 
@@ -2220,13 +2151,6 @@ const server = http.createServer(async (request, response) => {
       requireAllowedOrigin(request, response);
       consumeRateLimit(request, "adminAccountsWrite");
       await handleAdminAccountUpsert(request, response);
-      return;
-    }
-
-    if (request.method === "POST" && pathname === "/api/admin/airdrop-claims/reconcile") {
-      requireAllowedOrigin(request, response);
-      consumeRateLimit(request, "adminClaimReconcile");
-      await handleAdminClaimReconcile(request, response);
       return;
     }
 

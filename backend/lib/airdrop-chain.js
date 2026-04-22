@@ -2,7 +2,6 @@ const { ethers } = require("ethers");
 
 const AIRDROP_ABI = [
   "event AirdropStarted(uint256 indexed epoch, bytes32 indexed merkleRoot, uint256 deadline)",
-  "event Claimed(uint256 indexed epoch, uint256 indexed index, address indexed account, uint256 amount)",
   "function epochInfo(uint256) view returns (bytes32,uint256,uint256)",
   "function owner() view returns (address)",
 ];
@@ -95,8 +94,6 @@ async function fetchAirdropOwner(appConfig) {
 }
 
 module.exports = {
-  AIRDROP_ABI,
-  createAirdropContract,
   createAirdropProvider,
   fetchAirdropOwner,
   fetchEpochMetadata,

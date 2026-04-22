@@ -28,12 +28,6 @@ function normalizeRoundRecord(row) {
     startTxHash: String(row.start_tx_hash || "").trim(),
     startBlockNumber: row.start_block_number == null ? null : Number(row.start_block_number),
     startBlockHash: String(row.start_block_hash || "").trim(),
-    claimedCount: Number(row.claimed_count || 0),
-    claimedAmountRaw: String(row.claimed_amount_raw || "0"),
-    claimsSyncedThroughBlock: row.claims_synced_through_block == null
-      ? null
-      : Number(row.claims_synced_through_block),
-    claimsLastReconciledAt: normalizeIsoDate(row.claims_last_reconciled_at),
     createdAt: normalizeIsoDate(row.created_at),
     updatedAt: normalizeIsoDate(row.updated_at),
   };
@@ -52,9 +46,6 @@ function normalizeClaimRecord(row) {
     usernameDisplay: String(row.username_display || "").trim() || null,
     claimedAt: normalizeIsoDate(row.claimed_at),
     claimedTxHash: String(row.claimed_tx_hash || "").trim() || null,
-    claimedBlockNumber: row.claimed_block_number == null ? null : Number(row.claimed_block_number),
-    claimedBlockHash: String(row.claimed_block_hash || "").trim() || null,
-    claimedLogIndex: row.claimed_log_index == null ? null : Number(row.claimed_log_index),
     createdAt: normalizeIsoDate(row.claim_created_at ?? row.created_at),
     updatedAt: normalizeIsoDate(row.claim_updated_at ?? row.updated_at),
   };
@@ -78,9 +69,6 @@ function normalizeClaimInsertRecord(roundId, claim, timestamp) {
     proofJson: JSON.stringify(Array.isArray(claim.proof) ? claim.proof : []),
     claimedAt: normalizeIsoDate(claim.claimedAt),
     claimedTxHash: String(claim.claimedTxHash || "").trim().toLowerCase() || null,
-    claimedBlockNumber: claim.claimedBlockNumber == null ? null : Number(claim.claimedBlockNumber),
-    claimedBlockHash: String(claim.claimedBlockHash || "").trim().toLowerCase() || null,
-    claimedLogIndex: claim.claimedLogIndex == null ? null : Number(claim.claimedLogIndex),
     createdAt: normalizeIsoDate(claim.createdAt, timestamp),
     updatedAt: normalizeIsoDate(claim.updatedAt, timestamp),
   };
@@ -96,9 +84,6 @@ function createAirdropRoundStore(db) {
     c.proof_json,
     c.claimed_at,
     c.claimed_tx_hash,
-    c.claimed_block_number,
-    c.claimed_block_hash,
-    c.claimed_log_index,
     c.created_at AS claim_created_at,
     c.updated_at AS claim_updated_at,
     (
@@ -153,10 +138,6 @@ function createAirdropRoundStore(db) {
         start_tx_hash,
         start_block_number,
         start_block_hash,
-        claimed_count,
-        claimed_amount_raw,
-        claims_synced_through_block,
-        claims_last_reconciled_at,
         created_at,
         updated_at
       ) VALUES (
@@ -174,10 +155,6 @@ function createAirdropRoundStore(db) {
         @startTxHash,
         @startBlockNumber,
         @startBlockHash,
-        @claimedCount,
-        @claimedAmountRaw,
-        @claimsSyncedThroughBlock,
-        @claimsLastReconciledAt,
         @createdAt,
         @updatedAt
       )
@@ -198,10 +175,6 @@ function createAirdropRoundStore(db) {
           start_tx_hash = @startTxHash,
           start_block_number = @startBlockNumber,
           start_block_hash = @startBlockHash,
-          claimed_count = @claimedCount,
-          claimed_amount_raw = @claimedAmountRaw,
-          claims_synced_through_block = @claimsSyncedThroughBlock,
-          claims_last_reconciled_at = @claimsLastReconciledAt,
           updated_at = @updatedAt
       WHERE id = @id
     `),
@@ -218,9 +191,6 @@ function createAirdropRoundStore(db) {
         proof_json,
         claimed_at,
         claimed_tx_hash,
-        claimed_block_number,
-        claimed_block_hash,
-        claimed_log_index,
         created_at,
         updated_at
       ) VALUES (
@@ -231,57 +201,9 @@ function createAirdropRoundStore(db) {
         @proofJson,
         @claimedAt,
         @claimedTxHash,
-        @claimedBlockNumber,
-        @claimedBlockHash,
-        @claimedLogIndex,
         @createdAt,
         @updatedAt
       )
-    `),
-    getClaimByRoundAndIndex: db.prepare(`
-      SELECT *
-      FROM airdrop_claims
-      WHERE round_id = ?
-        AND claim_index = ?
-      LIMIT 1
-    `),
-    clearClaimSyncRange: db.prepare(`
-      UPDATE airdrop_claims
-      SET claimed_at = NULL,
-          claimed_tx_hash = NULL,
-          claimed_block_number = NULL,
-          claimed_block_hash = NULL,
-          claimed_log_index = NULL,
-          updated_at = @updatedAt
-      WHERE round_id = @roundId
-        AND claimed_block_number IS NOT NULL
-        AND claimed_block_number BETWEEN @fromBlock AND @toBlock
-    `),
-    updateClaimSyncMetadata: db.prepare(`
-      UPDATE airdrop_claims
-      SET claimed_at = @claimedAt,
-          claimed_tx_hash = @claimedTxHash,
-          claimed_block_number = @claimedBlockNumber,
-          claimed_block_hash = @claimedBlockHash,
-          claimed_log_index = @claimedLogIndex,
-          updated_at = @updatedAt
-      WHERE id = @id
-    `),
-    listClaimedAmountsByRound: db.prepare(`
-      SELECT amount_raw
-      FROM airdrop_claims
-      WHERE round_id = ?
-        AND claimed_tx_hash IS NOT NULL
-      ORDER BY claim_index ASC
-    `),
-    updateRoundClaimSyncStatus: db.prepare(`
-      UPDATE airdrop_rounds
-      SET claimed_count = @claimedCount,
-          claimed_amount_raw = @claimedAmountRaw,
-          claims_synced_through_block = @claimsSyncedThroughBlock,
-          claims_last_reconciled_at = @claimsLastReconciledAt,
-          updated_at = @updatedAt
-      WHERE id = @id
     `),
     listRounds: db.prepare(`
       SELECT *
@@ -370,16 +292,6 @@ function createAirdropRoundStore(db) {
     `),
   };
 
-  function rebuildClaimedTotals(roundId) {
-    const claimedRows = statements.listClaimedAmountsByRound.all(Number(roundId));
-    return {
-      claimedCount: claimedRows.length,
-      claimedAmountRaw: claimedRows
-        .reduce((total, row) => total + BigInt(String(row.amount_raw || "0")), 0n)
-        .toString(),
-    };
-  }
-
   function replaceClaimsForRound(roundId, claims, timestamp) {
     statements.deleteClaimsByRoundId.run(roundId);
     for (const claim of claims) {
@@ -419,10 +331,6 @@ function createAirdropRoundStore(db) {
       startTxHash: null,
       startBlockNumber: null,
       startBlockHash: null,
-      claimedCount: 0,
-      claimedAmountRaw: "0",
-      claimsSyncedThroughBlock: null,
-      claimsLastReconciledAt: null,
       createdAt: existing?.createdAt || updatedAt,
       updatedAt,
     };
@@ -477,12 +385,6 @@ function createAirdropRoundStore(db) {
       startTxHash: String(deployment.startTxHash || "").trim().toLowerCase() || null,
       startBlockNumber: deployment.startBlockNumber == null ? null : Number(deployment.startBlockNumber),
       startBlockHash: String(deployment.startBlockHash || "").trim().toLowerCase() || null,
-      claimedCount: Number(existing.claimedCount || 0),
-      claimedAmountRaw: String(existing.claimedAmountRaw || "0"),
-      claimsSyncedThroughBlock: existing.claimsSyncedThroughBlock == null
-        ? null
-        : Number(existing.claimsSyncedThroughBlock),
-      claimsLastReconciledAt: existing.claimsLastReconciledAt || null,
       createdAt: existing.createdAt,
       updatedAt,
     });
@@ -497,85 +399,6 @@ function createAirdropRoundStore(db) {
 
     finalizeRoundDeployment(roundId, deploymentKey, deployment) {
       return finalizeRoundDeployment(roundId, deploymentKey, deployment);
-    },
-
-    applyClaimSyncChunk(roundId, deploymentKey, chunk = {}) {
-      return db.transaction(() => {
-        const round = normalizeRoundRecord(
-          statements.getRoundByIdAndDeployment.get(Number(roundId), normalizeDeploymentKey(deploymentKey)),
-        );
-
-        if (!round) {
-          throw new Error("Stored airdrop round was not found.");
-        }
-
-        const updatedAt = normalizeIsoDate(chunk.updatedAt, new Date().toISOString());
-        const fromBlock = Number(chunk.fromBlock);
-        const toBlock = Number(chunk.toBlock);
-        const claims = Array.isArray(chunk.claims) ? chunk.claims : [];
-        let clearedCount = 0;
-        let appliedCount = 0;
-        let missingClaimCount = 0;
-        let mismatchCount = 0;
-
-        if (Number.isInteger(fromBlock) && Number.isInteger(toBlock) && fromBlock <= toBlock) {
-          clearedCount = Number(statements.clearClaimSyncRange.run({
-            roundId: round.id,
-            fromBlock,
-            toBlock,
-            updatedAt,
-          }).changes || 0);
-        }
-
-        for (const claimEvent of claims) {
-          const claimRow = statements.getClaimByRoundAndIndex.get(round.id, Number(claimEvent.claimIndex));
-          if (!claimRow) {
-            missingClaimCount += 1;
-            continue;
-          }
-
-          const expectedWallet = ethers.getAddress(String(claimRow.wallet_address || "").trim()).toLowerCase();
-          const actualWallet = ethers.getAddress(String(claimEvent.walletAddress || "").trim()).toLowerCase();
-          const expectedAmountRaw = String(claimRow.amount_raw || "0");
-          const actualAmountRaw = String(claimEvent.amountRaw || "0");
-
-          if (expectedWallet !== actualWallet || expectedAmountRaw !== actualAmountRaw) {
-            mismatchCount += 1;
-            continue;
-          }
-
-          statements.updateClaimSyncMetadata.run({
-            id: Number(claimRow.id),
-            claimedAt: normalizeIsoDate(claimEvent.claimedAt, updatedAt),
-            claimedTxHash: String(claimEvent.txHash || "").trim().toLowerCase() || null,
-            claimedBlockNumber: claimEvent.blockNumber == null ? null : Number(claimEvent.blockNumber),
-            claimedBlockHash: String(claimEvent.blockHash || "").trim().toLowerCase() || null,
-            claimedLogIndex: claimEvent.logIndex == null ? null : Number(claimEvent.logIndex),
-            updatedAt,
-          });
-          appliedCount += 1;
-        }
-
-        const totals = rebuildClaimedTotals(round.id);
-        statements.updateRoundClaimSyncStatus.run({
-          id: round.id,
-          claimedCount: totals.claimedCount,
-          claimedAmountRaw: totals.claimedAmountRaw,
-          claimsSyncedThroughBlock: chunk.claimsSyncedThroughBlock == null
-            ? round.claimsSyncedThroughBlock
-            : Number(chunk.claimsSyncedThroughBlock),
-          claimsLastReconciledAt: normalizeIsoDate(chunk.claimsLastReconciledAt, updatedAt),
-          updatedAt,
-        });
-
-        return {
-          round: normalizeRoundRecord(statements.getRoundByIdAndDeployment.get(round.id, round.deploymentKey)),
-          clearedCount,
-          appliedCount,
-          missingClaimCount,
-          mismatchCount,
-        };
-      })();
     },
 
     listRounds(deploymentKey) {
@@ -645,86 +468,6 @@ function createAirdropRoundStore(db) {
         round: normalizeRoundRecord(row),
         entry: normalizeClaimRecord(row),
       }));
-    },
-
-    getWalletClaimSummaries(walletAddresses, deploymentKey) {
-      const normalizedDeploymentKey = normalizeDeploymentKey(deploymentKey);
-      const normalizedWallets = [...new Set(
-        (Array.isArray(walletAddresses) ? walletAddresses : [])
-          .map((walletAddress) => {
-            try {
-              return ethers.getAddress(String(walletAddress || "").trim()).toLowerCase();
-            } catch {
-              return "";
-            }
-          })
-          .filter(Boolean),
-      )];
-
-      if (!normalizedWallets.length) {
-        return new Map();
-      }
-
-      const placeholders = normalizedWallets.map((_, index) => `@wallet${index}`).join(", ");
-      const sqlParams = normalizedWallets.reduce((params, walletAddress, index) => ({
-        ...params,
-        [`wallet${index}`]: walletAddress,
-      }), { deploymentKey: normalizedDeploymentKey });
-      const rows = db.prepare(`
-        SELECT LOWER(c.wallet_address) AS wallet_address, c.amount_raw
-        FROM airdrop_claims c
-        INNER JOIN airdrop_rounds r
-          ON r.id = c.round_id
-        WHERE r.deployment_key = @deploymentKey
-          AND c.claimed_tx_hash IS NOT NULL
-          AND LOWER(c.wallet_address) IN (${placeholders})
-      `).all(sqlParams);
-      const summaries = new Map();
-
-      for (const walletAddress of normalizedWallets) {
-        summaries.set(walletAddress, {
-          claimedCount: 0,
-          totalClaimedAmountRaw: "0",
-        });
-      }
-
-      for (const row of rows) {
-        const walletAddress = String(row.wallet_address || "").trim().toLowerCase();
-        const existing = summaries.get(walletAddress) || {
-          claimedCount: 0,
-          totalClaimedAmountRaw: "0",
-        };
-        existing.claimedCount += 1;
-        existing.totalClaimedAmountRaw = (
-          BigInt(existing.totalClaimedAmountRaw)
-          + BigInt(String(row.amount_raw || "0"))
-        ).toString();
-        summaries.set(walletAddress, existing);
-      }
-
-      return summaries;
-    },
-
-    getClaimSyncSummary(deploymentKey) {
-      const rounds = this.listRounds(deploymentKey).filter((round) => round.status === "deployed");
-      let totalClaimedCount = 0;
-      let totalClaimedAmountRaw = 0n;
-      let claimsLastReconciledAt = null;
-
-      for (const round of rounds) {
-        totalClaimedCount += Number(round.claimedCount || 0);
-        totalClaimedAmountRaw += BigInt(String(round.claimedAmountRaw || "0"));
-
-        if (round.claimsLastReconciledAt && (!claimsLastReconciledAt || round.claimsLastReconciledAt > claimsLastReconciledAt)) {
-          claimsLastReconciledAt = round.claimsLastReconciledAt;
-        }
-      }
-
-      return {
-        totalClaimedCount,
-        totalClaimedAmountRaw: totalClaimedAmountRaw.toString(),
-        claimsLastReconciledAt,
-      };
     },
 
     getStats(deploymentKey = null) {
