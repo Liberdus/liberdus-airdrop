@@ -5,9 +5,11 @@ const EIP6963_ANNOUNCE_EVENT = "eip6963:announceProvider";
 const EIP6963_REQUEST_EVENT = "eip6963:requestProvider";
 const LEGACY_WALLET_PREFIX = "legacy";
 const LEGACY_DEFAULT_WALLET_ID = `${LEGACY_WALLET_PREFIX}:default`;
+const GENERIC_WALLET_NAME_KEYS = new Set(["wallet", "injected-wallet"]);
 
 const discoveredWallets = new Map();
 const providerIds = new WeakMap();
+const walletIdentityIds = new Map();
 const walletEventSubscribers = new Set();
 
 let discoveryInitialized = false;
@@ -85,10 +87,10 @@ function guessLegacyWalletName(provider) {
   if (provider?.isPhantom) return "Phantom";
   if (provider?.isRabby) return "Rabby";
   if (provider?.isCoinbaseWallet) return "Coinbase Wallet";
-  if (provider?.isMetaMask) return "MetaMask";
   if (provider?.isBraveWallet) return "Brave Wallet";
   if (provider?.isFrame) return "Frame";
   if (provider?.isTally) return "Taho";
+  if (provider?.isMetaMask) return "MetaMask";
   return "Injected Wallet";
 }
 
@@ -96,11 +98,63 @@ function guessLegacyWalletRdns(provider) {
   if (provider?.isPhantom) return "app.phantom";
   if (provider?.isRabby) return "io.rabby";
   if (provider?.isCoinbaseWallet) return "com.coinbase.wallet";
-  if (provider?.isMetaMask) return "io.metamask";
   if (provider?.isBraveWallet) return "com.brave.wallet";
   if (provider?.isFrame) return "sh.frame";
   if (provider?.isTally) return "so.tally";
+  if (provider?.isMetaMask) return "io.metamask";
   return "";
+}
+
+function normalizeWalletIdentityValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeWalletNameKey(value) {
+  return normalizeWalletIdentityValue(value).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function getWalletIdentityKeys(provider, info = {}) {
+  const keys = [];
+  const uuid = normalizeWalletIdentityValue(info.uuid);
+  const rdns = normalizeWalletIdentityValue(info.rdns || guessLegacyWalletRdns(provider));
+  const nameKey = normalizeWalletNameKey(info.name || guessLegacyWalletName(provider));
+
+  if (uuid) keys.push(`uuid:${uuid}`);
+  if (rdns) keys.push(`rdns:${rdns}`);
+  if (nameKey && !GENERIC_WALLET_NAME_KEYS.has(nameKey)) {
+    keys.push(`name:${nameKey}`);
+  }
+
+  return [...new Set(keys)];
+}
+
+function findWalletIdentityId(provider, info = {}) {
+  for (const key of getWalletIdentityKeys(provider, info)) {
+    const walletId = walletIdentityIds.get(key);
+    if (walletId) return walletId;
+  }
+
+  return null;
+}
+
+function rememberWalletIdentity(walletId, provider, info = {}) {
+  for (const key of getWalletIdentityKeys(provider, info)) {
+    walletIdentityIds.set(key, walletId);
+  }
+}
+
+function resolveWalletProvider(previous, candidate) {
+  if (!previous?.provider) return candidate?.provider || null;
+  if (candidate?.source === "eip6963") return candidate.provider;
+  return previous.provider;
+}
+
+function resolveWalletSource(previous, candidate) {
+  if (previous?.source === "eip6963" || candidate?.source === "eip6963") {
+    return "eip6963";
+  }
+
+  return candidate?.source || previous?.source || LEGACY_WALLET_PREFIX;
 }
 
 function getWalletSortLabel(wallet) {
@@ -180,7 +234,9 @@ function registerWallet(candidate) {
 
   const existingId = providerIds.get(provider);
   const info = candidate?.info || {};
+  const matchingIdentityId = findWalletIdentityId(provider, info);
   const nextId = existingId
+    || matchingIdentityId
     || candidate?.id
     || info.uuid
     || info.rdns
@@ -189,8 +245,8 @@ function registerWallet(candidate) {
 
   const descriptor = {
     id: nextId,
-    provider,
-    source: candidate?.source || previous?.source || LEGACY_WALLET_PREFIX,
+    provider: resolveWalletProvider(previous, candidate),
+    source: resolveWalletSource(previous, candidate),
     info: {
       uuid: info.uuid || previous?.info?.uuid || "",
       name: info.name || previous?.info?.name || "Injected Wallet",
@@ -201,6 +257,12 @@ function registerWallet(candidate) {
 
   discoveredWallets.set(nextId, descriptor);
   providerIds.set(provider, nextId);
+  if (previous?.provider) {
+    providerIds.set(previous.provider, nextId);
+    rememberWalletIdentity(nextId, previous.provider, previous.info);
+  }
+  rememberWalletIdentity(nextId, provider, info);
+  rememberWalletIdentity(nextId, descriptor.provider, descriptor.info);
   syncWalletEventProvider();
   return descriptor;
 }

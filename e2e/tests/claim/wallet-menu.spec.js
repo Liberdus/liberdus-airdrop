@@ -4,6 +4,7 @@ const { connectViaWalletPicker, openWalletMenu } = require("../helpers");
 test("claimant wallet menu shows the connected address, chain id, and disconnect flow", async ({ page }) => {
   await page.goto("index.html");
   await connectViaWalletPicker(page);
+  await expect(page.getByText("Nothing available right now.")).toBeVisible();
 
   await openWalletMenu(page, /0xf39f\.\.\.2266/i);
   await expect(page.locator("#walletMenu")).toBeVisible();
@@ -21,6 +22,73 @@ test("claimant wallet menu shows the connected address, chain id, and disconnect
   await expect(page.getByRole("button", { name: "Connect Wallet" })).toBeVisible();
   await expect(page.getByText("Connect your wallet to check for claims.")).toBeVisible();
   await expect(page.getByText("Available claims will appear here after you connect.")).toBeVisible();
+});
+
+test("wallet picker merges a legacy wallet with the same EIP-6963 wallet announcement", async ({ page }) => {
+  await page.addInitScript(() => {
+    const icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%23f6851b'/%3E%3C/svg%3E";
+
+    window.addEventListener("eip6963:requestProvider", () => {
+      const provider = {
+        get isMetaMask() {
+          return Boolean(window.ethereum?.isMetaMask);
+        },
+        request(args) {
+          return window.ethereum.request(args);
+        },
+        on(...args) {
+          return window.ethereum.on(...args);
+        },
+        removeListener(...args) {
+          return window.ethereum.removeListener(...args);
+        },
+        off(...args) {
+          return window.ethereum.off?.(...args);
+        },
+        once(...args) {
+          return window.ethereum.once?.(...args);
+        },
+      };
+
+      window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
+        detail: {
+          info: {
+            uuid: "test-metamask-wallet",
+            name: "MetaMask",
+            icon,
+            rdns: "io.metamask",
+          },
+          provider,
+        },
+      }));
+    });
+  });
+
+  await page.goto("index.html");
+  await page.getByRole("button", { name: "Connect Wallet" }).click();
+
+  const metaMaskOption = page.getByRole("button", { name: /^MetaMask$/ });
+  await expect(metaMaskOption).toHaveCount(1);
+  await metaMaskOption.click();
+  await expect(page.getByRole("button", { name: /0xf39f\.\.\.2266/i })).toBeVisible();
+});
+
+test.describe("EIP-6963-only wallet discovery", () => {
+  test.use({ walletDiscoveryMode: "eip6963-only" });
+
+  test("claimant page connects through an announced provider without window.ethereum", async ({ page }) => {
+    await page.goto("index.html");
+    await page.getByRole("button", { name: "Connect Wallet" }).click();
+
+    const metaMaskOption = page.getByRole("button", { name: /^MetaMask$/ });
+    await expect(metaMaskOption).toHaveCount(1);
+    await metaMaskOption.click();
+    await expect(page.getByText("Nothing available right now.")).toBeVisible();
+
+    await openWalletMenu(page, /0xf39f\.\.\.2266/i);
+    await expect(page.locator("#walletMenu")).toBeVisible();
+    await expect(page.locator("#walletMenuChainId")).toHaveText("1337");
+  });
 });
 
 test("connected claimant sees the generic empty state when no rounds have started", async ({ page, mockWallet }) => {
