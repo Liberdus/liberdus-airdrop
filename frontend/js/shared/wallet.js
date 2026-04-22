@@ -113,13 +113,29 @@ function normalizeWalletNameKey(value) {
   return normalizeWalletIdentityValue(value).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+function resolveWalletBrand(provider, info = {}) {
+  const rdns = normalizeWalletIdentityValue(info.rdns || guessLegacyWalletRdns(provider));
+  const name = normalizeWalletIdentityValue(info.name || guessLegacyWalletName(provider));
+
+  if (provider?.isPhantom || rdns.includes("phantom") || name.includes("phantom")) return "phantom";
+  if (provider?.isRabby || rdns.includes("rabby") || name.includes("rabby")) return "rabby";
+  if (provider?.isCoinbaseWallet || rdns.includes("coinbase") || name.includes("coinbase")) return "coinbase-wallet";
+  if (provider?.isBraveWallet || rdns.includes("brave") || name.includes("brave")) return "brave-wallet";
+  if (provider?.isFrame || rdns.includes("frame") || name.includes("frame")) return "frame";
+  if (provider?.isTally || rdns.includes("tally") || name.includes("taho") || name.includes("tally")) return "taho";
+  if (provider?.isMetaMask || rdns.includes("metamask") || name.includes("metamask")) return "metamask";
+  return "";
+}
+
 function getWalletIdentityKeys(provider, info = {}) {
   const keys = [];
   const uuid = normalizeWalletIdentityValue(info.uuid);
   const rdns = normalizeWalletIdentityValue(info.rdns || guessLegacyWalletRdns(provider));
   const nameKey = normalizeWalletNameKey(info.name || guessLegacyWalletName(provider));
+  const brand = resolveWalletBrand(provider, info);
 
   if (uuid) keys.push(`uuid:${uuid}`);
+  if (brand) keys.push(`brand:${brand}`);
   if (rdns) keys.push(`rdns:${rdns}`);
   if (nameKey && !GENERIC_WALLET_NAME_KEYS.has(nameKey)) {
     keys.push(`name:${nameKey}`);
