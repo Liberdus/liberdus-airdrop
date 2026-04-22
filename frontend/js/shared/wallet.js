@@ -6,10 +6,22 @@ const EIP6963_REQUEST_EVENT = "eip6963:requestProvider";
 const LEGACY_WALLET_PREFIX = "legacy";
 const LEGACY_DEFAULT_WALLET_ID = `${LEGACY_WALLET_PREFIX}:default`;
 const GENERIC_WALLET_NAME_KEYS = new Set(["wallet", "injected-wallet"]);
+const GENERIC_WALLET_IDENTITY_TOKENS = new Set([
+  "app",
+  "browser",
+  "com",
+  "extension",
+  "injected",
+  "io",
+  "org",
+  "provider",
+  "providers",
+  "wallet",
+  "www",
+]);
 
-const discoveredWallets = new Map();
-const providerIds = new WeakMap();
-const walletIdentityIds = new Map();
+const walletObservations = new Map();
+const providerObservationIds = new WeakMap();
 const walletEventSubscribers = new Set();
 
 let discoveryInitialized = false;
@@ -113,18 +125,25 @@ function normalizeWalletNameKey(value) {
   return normalizeWalletIdentityValue(value).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function resolveWalletBrand(provider, info = {}) {
-  const rdns = normalizeWalletIdentityValue(info.rdns || guessLegacyWalletRdns(provider));
-  const name = normalizeWalletIdentityValue(info.name || guessLegacyWalletName(provider));
+function getWalletIdentityTokens(provider, info = {}) {
+  const values = [
+    normalizeWalletIdentityValue(info.rdns || guessLegacyWalletRdns(provider)),
+    normalizeWalletIdentityValue(info.name || guessLegacyWalletName(provider)),
+  ];
+  const tokens = new Set();
 
-  if (provider?.isPhantom || rdns.includes("phantom") || name.includes("phantom")) return "phantom";
-  if (provider?.isRabby || rdns.includes("rabby") || name.includes("rabby")) return "rabby";
-  if (provider?.isCoinbaseWallet || rdns.includes("coinbase") || name.includes("coinbase")) return "coinbase-wallet";
-  if (provider?.isBraveWallet || rdns.includes("brave") || name.includes("brave")) return "brave-wallet";
-  if (provider?.isFrame || rdns.includes("frame") || name.includes("frame")) return "frame";
-  if (provider?.isTally || rdns.includes("tally") || name.includes("taho") || name.includes("tally")) return "taho";
-  if (provider?.isMetaMask || rdns.includes("metamask") || name.includes("metamask")) return "metamask";
-  return "";
+  for (const value of values) {
+    if (!value) continue;
+    const pieces = value.split(/[^a-z0-9]+/).filter(Boolean);
+    for (const piece of pieces) {
+      if (piece.length < 2) continue;
+      if (/^\d+$/u.test(piece)) continue;
+      if (GENERIC_WALLET_IDENTITY_TOKENS.has(piece)) continue;
+      tokens.add(piece);
+    }
+  }
+
+  return [...tokens];
 }
 
 function getWalletIdentityKeys(provider, info = {}) {
@@ -132,10 +151,11 @@ function getWalletIdentityKeys(provider, info = {}) {
   const uuid = normalizeWalletIdentityValue(info.uuid);
   const rdns = normalizeWalletIdentityValue(info.rdns || guessLegacyWalletRdns(provider));
   const nameKey = normalizeWalletNameKey(info.name || guessLegacyWalletName(provider));
-  const brand = resolveWalletBrand(provider, info);
 
   if (uuid) keys.push(`uuid:${uuid}`);
-  if (brand) keys.push(`brand:${brand}`);
+  for (const token of getWalletIdentityTokens(provider, info)) {
+    keys.push(`brand:${token}`);
+  }
   if (rdns) keys.push(`rdns:${rdns}`);
   if (nameKey && !GENERIC_WALLET_NAME_KEYS.has(nameKey)) {
     keys.push(`name:${nameKey}`);
@@ -144,33 +164,46 @@ function getWalletIdentityKeys(provider, info = {}) {
   return [...new Set(keys)];
 }
 
-function findWalletIdentityId(provider, info = {}) {
-  for (const key of getWalletIdentityKeys(provider, info)) {
-    const walletId = walletIdentityIds.get(key);
-    if (walletId) return walletId;
-  }
-
-  return null;
+function mergeWalletInfo(primary = {}, secondary = {}) {
+  return {
+    uuid: String(primary.uuid || secondary.uuid || ""),
+    name: String(primary.name || secondary.name || "Injected Wallet"),
+    icon: String(primary.icon || secondary.icon || ""),
+    rdns: String(primary.rdns || secondary.rdns || ""),
+  };
 }
 
-function rememberWalletIdentity(walletId, provider, info = {}) {
-  for (const key of getWalletIdentityKeys(provider, info)) {
-    walletIdentityIds.set(key, walletId);
-  }
+function mergeSourceIds(primaryIds = [], secondaryIds = []) {
+  return [...new Set([...primaryIds.filter(Boolean), ...secondaryIds.filter(Boolean)])];
 }
 
-function resolveWalletProvider(previous, candidate) {
-  if (!previous?.provider) return candidate?.provider || null;
-  if (candidate?.source === "eip6963") return candidate.provider;
-  return previous.provider;
+function createWalletObservation(candidate) {
+  return {
+    observationId: `observation:${walletObservations.size + 1}`,
+    provider: candidate.provider,
+    source: candidate.source || LEGACY_WALLET_PREFIX,
+    sourceIds: candidate.id ? [candidate.id] : [],
+    info: mergeWalletInfo(candidate.info || {}),
+  };
 }
 
-function resolveWalletSource(previous, candidate) {
-  if (previous?.source === "eip6963" || candidate?.source === "eip6963") {
-    return "eip6963";
-  }
+function mergeWalletObservation(previous, candidate) {
+  const candidateSource = candidate.source || LEGACY_WALLET_PREFIX;
+  const preferCandidateInfo = candidateSource === "eip6963" || previous.source !== "eip6963";
+  const primaryInfo = preferCandidateInfo ? (candidate.info || {}) : previous.info;
+  const secondaryInfo = preferCandidateInfo ? previous.info : (candidate.info || {});
+  const primaryIds = candidateSource === "eip6963" ? [candidate.id] : previous.sourceIds;
+  const secondaryIds = candidateSource === "eip6963" ? previous.sourceIds : [candidate.id];
 
-  return candidate?.source || previous?.source || LEGACY_WALLET_PREFIX;
+  return {
+    observationId: previous.observationId,
+    provider: candidate.provider,
+    source: previous.source === "eip6963" || candidateSource === "eip6963"
+      ? "eip6963"
+      : candidateSource,
+    sourceIds: mergeSourceIds(primaryIds, secondaryIds),
+    info: mergeWalletInfo(primaryInfo, secondaryInfo),
+  };
 }
 
 function getWalletSortLabel(wallet) {
@@ -178,7 +211,135 @@ function getWalletSortLabel(wallet) {
 }
 
 function listWalletsSnapshot() {
-  return [...discoveredWallets.values()].sort((left, right) => getWalletSortLabel(left).localeCompare(getWalletSortLabel(right)));
+  const buckets = new Map();
+  const bucketIdsByKey = new Map();
+  let nextBucketIndex = 1;
+
+  function ensureBucket(bucketId) {
+    if (!buckets.has(bucketId)) {
+      buckets.set(bucketId, {
+        id: bucketId,
+        identityKeys: new Set(),
+        observations: [],
+      });
+    }
+    return buckets.get(bucketId);
+  }
+
+  function mergeBuckets(targetBucketId, sourceBucketId) {
+    if (!sourceBucketId || sourceBucketId === targetBucketId) return targetBucketId;
+    const targetBucket = ensureBucket(targetBucketId);
+    const sourceBucket = buckets.get(sourceBucketId);
+    if (!sourceBucket) return targetBucketId;
+
+    for (const observation of sourceBucket.observations) {
+      if (!targetBucket.observations.includes(observation)) {
+        targetBucket.observations.push(observation);
+      }
+    }
+
+    for (const key of sourceBucket.identityKeys) {
+      targetBucket.identityKeys.add(key);
+      bucketIdsByKey.set(key, targetBucketId);
+    }
+
+    buckets.delete(sourceBucketId);
+    return targetBucketId;
+  }
+
+  for (const observation of walletObservations.values()) {
+    const identityKeys = getWalletIdentityKeys(observation.provider, observation.info);
+    const keys = identityKeys.length ? identityKeys : [`observation:${observation.observationId}`];
+    const matchedBucketIds = [...new Set(keys.map((key) => bucketIdsByKey.get(key)).filter(Boolean))];
+    const bucketId = matchedBucketIds[0] || `bucket:${nextBucketIndex++}`;
+
+    ensureBucket(bucketId);
+    for (const extraBucketId of matchedBucketIds.slice(1)) {
+      mergeBuckets(bucketId, extraBucketId);
+    }
+
+    const bucket = ensureBucket(bucketId);
+    bucket.observations.push(observation);
+    for (const key of keys) {
+      bucket.identityKeys.add(key);
+      bucketIdsByKey.set(key, bucketId);
+    }
+  }
+
+  return [...buckets.values()]
+    .map((bucket) => createWalletDescriptor(bucket))
+    .filter(Boolean)
+    .sort((left, right) => getWalletSortLabel(left).localeCompare(getWalletSortLabel(right)));
+}
+
+function compareObservationPreference(left, right) {
+  const leftRank = [
+    left.source === "eip6963" ? 1 : 0,
+    left.info?.uuid ? 1 : 0,
+    left.info?.icon ? 1 : 0,
+    left.info?.rdns ? 1 : 0,
+    left.info?.name ? 1 : 0,
+  ];
+  const rightRank = [
+    right.source === "eip6963" ? 1 : 0,
+    right.info?.uuid ? 1 : 0,
+    right.info?.icon ? 1 : 0,
+    right.info?.rdns ? 1 : 0,
+    right.info?.name ? 1 : 0,
+  ];
+
+  for (let index = 0; index < leftRank.length; index += 1) {
+    if (leftRank[index] !== rightRank[index]) {
+      return rightRank[index] - leftRank[index];
+    }
+  }
+
+  return 0;
+}
+
+function pickPreferredObservation(observations) {
+  return [...observations].sort(compareObservationPreference)[0] || null;
+}
+
+function createWalletDescriptor(bucket) {
+  const preferredObservation = pickPreferredObservation(bucket.observations);
+  if (!preferredObservation) return null;
+
+  let info = mergeWalletInfo(preferredObservation.info);
+  for (const observation of bucket.observations) {
+    if (observation === preferredObservation) continue;
+    info = mergeWalletInfo(info, observation.info);
+  }
+
+  const preferredId = preferredObservation.sourceIds[0] || "";
+  const walletId = preferredId || createWalletId(
+    preferredObservation.source || LEGACY_WALLET_PREFIX,
+    info.name,
+    "wallet",
+  );
+  const aliases = new Set();
+
+  for (const observation of bucket.observations) {
+    for (const sourceId of observation.sourceIds) {
+      if (sourceId && sourceId !== walletId) {
+        aliases.add(sourceId);
+      }
+    }
+  }
+
+  return {
+    id: walletId,
+    provider: preferredObservation.provider,
+    source: bucket.observations.some((observation) => observation.source === "eip6963")
+      ? "eip6963"
+      : (preferredObservation.source || LEGACY_WALLET_PREFIX),
+    info,
+    aliases,
+  };
+}
+
+function findWalletById(wallets, walletId) {
+  return wallets.find((wallet) => wallet.id === walletId || wallet.aliases?.has(walletId)) || null;
 }
 
 function unbindWalletEventProvider() {
@@ -248,39 +409,22 @@ function registerWallet(candidate) {
   const provider = candidate?.provider;
   if (!provider || typeof provider.request !== "function") return null;
 
-  const existingId = providerIds.get(provider);
-  const info = candidate?.info || {};
-  const matchingIdentityId = findWalletIdentityId(provider, info);
-  const nextId = existingId
-    || matchingIdentityId
-    || candidate?.id
-    || info.uuid
-    || info.rdns
-    || createWalletId(candidate?.source || LEGACY_WALLET_PREFIX, info.name, "wallet");
-  const previous = discoveredWallets.get(nextId);
+  const existingObservationId = providerObservationIds.get(provider);
+  if (existingObservationId) {
+    const previousObservation = walletObservations.get(existingObservationId);
+    if (!previousObservation) return null;
 
-  const descriptor = {
-    id: nextId,
-    provider: resolveWalletProvider(previous, candidate),
-    source: resolveWalletSource(previous, candidate),
-    info: {
-      uuid: info.uuid || previous?.info?.uuid || "",
-      name: info.name || previous?.info?.name || "Injected Wallet",
-      icon: info.icon || previous?.info?.icon || "",
-      rdns: info.rdns || previous?.info?.rdns || "",
-    },
-  };
-
-  discoveredWallets.set(nextId, descriptor);
-  providerIds.set(provider, nextId);
-  if (previous?.provider) {
-    providerIds.set(previous.provider, nextId);
-    rememberWalletIdentity(nextId, previous.provider, previous.info);
+    const nextObservation = mergeWalletObservation(previousObservation, candidate);
+    walletObservations.set(existingObservationId, nextObservation);
+    syncWalletEventProvider();
+    return nextObservation;
   }
-  rememberWalletIdentity(nextId, provider, info);
-  rememberWalletIdentity(nextId, descriptor.provider, descriptor.info);
+
+  const observation = createWalletObservation(candidate);
+  walletObservations.set(observation.observationId, observation);
+  providerObservationIds.set(provider, observation.observationId);
   syncWalletEventProvider();
-  return descriptor;
+  return observation;
 }
 
 function registerLegacyWallet(provider, index = 0) {
@@ -377,10 +521,10 @@ function applyActiveWallet(runtime, wallet) {
 
 async function resolveWalletById(walletId) {
   if (!walletId) return null;
-  const cachedWallet = discoveredWallets.get(walletId);
+  const cachedWallet = findWalletById(listWalletsSnapshot(), walletId);
   if (cachedWallet) return cachedWallet;
   const wallets = await discoverWallets();
-  return wallets.find((wallet) => wallet.id === walletId) || null;
+  return findWalletById(wallets, walletId);
 }
 
 export async function getAvailableWallets() {

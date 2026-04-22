@@ -144,6 +144,71 @@ test("wallet picker merges Firefox-style Phantom variants into one option", asyn
   await expect(page.getByRole("button", { name: /0xf39f\.\.\.2266/i })).toBeVisible();
 });
 
+test("wallet picker removes a stale legacy entry once a later Phantom match is found", async ({ page }) => {
+  await page.addInitScript(() => {
+    let legacyLooksLikePhantom = false;
+    const icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%2353f3c3'/%3E%3C/svg%3E";
+
+    window.addEventListener("ethereum#initialized", () => {
+      Object.defineProperty(window.ethereum, "isMetaMask", {
+        configurable: true,
+        get() {
+          return false;
+        },
+      });
+      Object.defineProperty(window.ethereum, "isPhantom", {
+        configurable: true,
+        get() {
+          return legacyLooksLikePhantom;
+        },
+      });
+    });
+
+    window.addEventListener("eip6963:requestProvider", () => {
+      legacyLooksLikePhantom = true;
+
+      const provider = {
+        get isPhantom() {
+          return true;
+        },
+        request(args) {
+          return window.ethereum.request(args);
+        },
+        on(...args) {
+          return window.ethereum.on(...args);
+        },
+        removeListener(...args) {
+          return window.ethereum.removeListener(...args);
+        },
+        off(...args) {
+          return window.ethereum.off?.(...args);
+        },
+        once(...args) {
+          return window.ethereum.once?.(...args);
+        },
+      };
+
+      window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
+        detail: {
+          info: {
+            uuid: "late-phantom-match",
+            name: "Phantom Wallet",
+            icon,
+            rdns: "com.phantom.browser",
+          },
+          provider,
+        },
+      }));
+    });
+  });
+
+  await page.goto("index.html");
+  await page.getByRole("button", { name: "Connect Wallet" }).click();
+
+  await expect(page.getByRole("button", { name: /Phantom/i })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /Injected Wallet/i })).toHaveCount(0);
+});
+
 test("connected claimant sees the generic empty state when no rounds have started", async ({ page, mockWallet }) => {
   await page.goto("index.html");
   await mockWallet.setAccount(page, mockWallet.accounts.claimant);
