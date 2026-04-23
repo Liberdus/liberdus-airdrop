@@ -828,3 +828,21 @@ test("claimant footer can add the token to MetaMask and hides explorer link when
   await expect(page.locator("#addTokenLink")).toBeVisible();
   await expect(page.locator("#tokenExplorerLink")).toBeHidden();
 });
+
+test("claimant footer hides explorer link when airdrop address is unset", async ({ page }) => {
+  await page.route("**/config.local.json", async (route) => {
+    const response = await route.fetch();
+    const config = await response.json();
+    delete config.airdropAddress;
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(config),
+    });
+  });
+
+  await page.goto("index.html");
+
+  await expect(page.locator("#tokenExplorerLink")).toBeHidden();
+});

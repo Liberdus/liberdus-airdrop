@@ -989,6 +989,7 @@ function syncWalletButton() {
 
 function updateFooterLinks() {
   const hasTokenAddress = Boolean(runtime.config.tokenAddress);
+  const hasAirdropAddress = Boolean(runtime.config.airdropAddress);
   const showAddToWallet = hasTokenAddress && runtime.account && isMetaMaskWalletSelected();
   els.addTokenLink.hidden = !showAddToWallet;
   if (showAddToWallet) {
@@ -998,8 +999,8 @@ function updateFooterLinks() {
   }
 
   const explorerBaseUrl = String(runtime.config.explorerBaseUrl || "").trim().replace(/\/+$/, "");
-  if (explorerBaseUrl && hasTokenAddress) {
-    els.tokenExplorerLink.href = `${explorerBaseUrl}/address/${runtime.config.tokenAddress}`;
+  if (explorerBaseUrl && hasAirdropAddress) {
+    els.tokenExplorerLink.href = `${explorerBaseUrl}/address/${runtime.config.airdropAddress}`;
     els.tokenExplorerLink.hidden = false;
   } else {
     els.tokenExplorerLink.hidden = true;
