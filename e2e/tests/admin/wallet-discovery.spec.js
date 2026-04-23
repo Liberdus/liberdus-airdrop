@@ -3,6 +3,70 @@ const { expect, test, toHexChainId } = require("../../fixtures/testWithMockWalle
 test.describe("admin wallet discovery", () => {
   test.use({ walletDiscoveryMode: "manual-eip6963" });
 
+  test("admin wallet picker shows Phantom as unavailable on BNB Smart Chain", async ({ page }) => {
+    await page.addInitScript(() => {
+      const storageKey = "liberdus-airdrop-ui-config";
+      const current = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+      window.localStorage.setItem(storageKey, JSON.stringify({
+        ...current,
+        chainId: 56,
+        networkName: "BNB Smart Chain",
+        rpcUrl: "https://bsc-dataseed.binance.org",
+        explorerBaseUrl: "https://bscscan.com",
+        nativeCurrency: {
+          name: "BNB",
+          symbol: "BNB",
+          decimals: 18,
+        },
+      }));
+
+      const icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%2353f3c3'/%3E%3C/svg%3E";
+
+      window.addEventListener("eip6963:requestProvider", () => {
+        const provider = {
+          get isPhantom() {
+            return true;
+          },
+          request(args) {
+            return window.__liberdusMockWalletProvider.request(args);
+          },
+          on(...args) {
+            return window.__liberdusMockWalletProvider.on(...args);
+          },
+          removeListener(...args) {
+            return window.__liberdusMockWalletProvider.removeListener(...args);
+          },
+          off(...args) {
+            return window.__liberdusMockWalletProvider.off?.(...args);
+          },
+          once(...args) {
+            return window.__liberdusMockWalletProvider.once?.(...args);
+          },
+        };
+
+        window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
+          detail: {
+            info: {
+              uuid: "phantom-admin-wallet",
+              name: "Phantom Wallet",
+              icon,
+              rdns: "com.phantom.browser",
+            },
+            provider,
+          },
+        }));
+      });
+    });
+
+    await page.goto("admin.html");
+    await page.getByRole("button", { name: "Connect Wallet" }).click();
+
+    const phantomOption = page.locator(".wallet-picker-option", { hasText: "Phantom Wallet" });
+    await expect(phantomOption).toHaveCount(1);
+    await expect(phantomOption).toBeDisabled();
+    await expect(phantomOption).toContainText("Doesn't support BNB Smart Chain.");
+  });
+
   test("admin auto-switches the configured network through the selected wallet", async ({ page, mockWallet }) => {
     await page.addInitScript(() => {
       const icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%23f6851b'/%3E%3C/svg%3E";

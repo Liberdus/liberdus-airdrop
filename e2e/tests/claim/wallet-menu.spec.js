@@ -446,6 +446,248 @@ test("wallet picker merges Firefox-style Phantom variants into one option", asyn
   await expect(page.getByRole("button", { name: /0xf39f\.\.\.2266/i })).toBeVisible();
 });
 
+test("wallet picker shows Phantom as unavailable on BNB Smart Chain", async ({ page }) => {
+  await page.addInitScript(() => {
+    const storageKey = "liberdus-airdrop-ui-config";
+    const current = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      ...current,
+      chainId: 56,
+      networkName: "BNB Smart Chain",
+      rpcUrl: "https://bsc-dataseed.binance.org",
+      explorerBaseUrl: "https://bscscan.com",
+      nativeCurrency: {
+        name: "BNB",
+        symbol: "BNB",
+        decimals: 18,
+      },
+    }));
+
+    const icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%2353f3c3'/%3E%3C/svg%3E";
+
+    window.addEventListener("ethereum#initialized", () => {
+      window.ethereum.isPhantom = true;
+    });
+
+    window.addEventListener("eip6963:requestProvider", () => {
+      const provider = {
+        get isPhantom() {
+          return true;
+        },
+        request(args) {
+          return window.ethereum.request(args);
+        },
+        on(...args) {
+          return window.ethereum.on(...args);
+        },
+        removeListener(...args) {
+          return window.ethereum.removeListener(...args);
+        },
+        off(...args) {
+          return window.ethereum.off?.(...args);
+        },
+        once(...args) {
+          return window.ethereum.once?.(...args);
+        },
+      };
+
+      window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
+        detail: {
+          info: {
+            uuid: "phantom-bnb-wallet",
+            name: "Phantom Wallet",
+            icon,
+            rdns: "com.phantom.browser",
+          },
+          provider,
+        },
+      }));
+    });
+  });
+
+  await page.goto("index.html");
+  await page.getByRole("button", { name: "Connect Wallet" }).click();
+
+  const phantomOption = page.locator(".wallet-picker-option", { hasText: "Phantom Wallet" });
+  await expect(phantomOption).toHaveCount(1);
+  await expect(phantomOption).toBeDisabled();
+  await expect(phantomOption).toContainText("Doesn't support BNB Smart Chain.");
+
+  await page.evaluate(() => {
+    const button = [...document.querySelectorAll(".wallet-picker-option")]
+      .find((candidate) => candidate.textContent?.includes("Phantom Wallet"));
+    if (!(button instanceof HTMLButtonElement)) {
+      throw new Error("Phantom option not found.");
+    }
+
+    button.disabled = false;
+    button.click();
+  });
+
+  await expect(page.locator("#claimToastMessage")).toHaveText(
+    "Connect wallet: Phantom Wallet does not support BNB Smart Chain.",
+  );
+  await expect(page.getByRole("button", { name: /0xf39f\.\.\.2266/i })).toHaveCount(0);
+});
+
+test("wallet picker waits for config before disabling Phantom on BNB Smart Chain", async ({ page }) => {
+  await page.route("**/config.local.json", async (route) => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 750);
+    });
+    await route.continue();
+  });
+
+  await page.addInitScript(() => {
+    const storageKey = "liberdus-airdrop-ui-config";
+    const current = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      ...current,
+      chainId: 56,
+      networkName: "BNB Smart Chain",
+      rpcUrl: "https://bsc-dataseed.binance.org",
+      explorerBaseUrl: "https://bscscan.com",
+      nativeCurrency: {
+        name: "BNB",
+        symbol: "BNB",
+        decimals: 18,
+      },
+    }));
+
+    const icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%2353f3c3'/%3E%3C/svg%3E";
+
+    window.addEventListener("ethereum#initialized", () => {
+      window.ethereum.isPhantom = true;
+    });
+
+    window.addEventListener("eip6963:requestProvider", () => {
+      const provider = {
+        get isPhantom() {
+          return true;
+        },
+        request(args) {
+          return window.ethereum.request(args);
+        },
+        on(...args) {
+          return window.ethereum.on(...args);
+        },
+        removeListener(...args) {
+          return window.ethereum.removeListener(...args);
+        },
+        off(...args) {
+          return window.ethereum.off?.(...args);
+        },
+        once(...args) {
+          return window.ethereum.once?.(...args);
+        },
+      };
+
+      window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
+        detail: {
+          info: {
+            uuid: "phantom-delayed-config-wallet",
+            name: "Phantom Wallet",
+            icon,
+            rdns: "com.phantom.browser",
+          },
+          provider,
+        },
+      }));
+    });
+  });
+
+  await page.goto("index.html");
+  await page.getByRole("button", { name: "Connect Wallet" }).click();
+
+  const phantomOption = page.locator(".wallet-picker-option", { hasText: "Phantom Wallet" });
+  await expect(phantomOption).toHaveCount(1);
+  await expect(phantomOption).toBeDisabled();
+  await expect(phantomOption).toContainText("Doesn't support BNB Smart Chain.");
+});
+
+test("connect button shows a busy state while waiting for wallet config", async ({ page }) => {
+  await page.route("**/config.local.json", async (route) => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 750);
+    });
+    await route.continue();
+  });
+
+  await page.goto("index.html");
+  await page.getByRole("button", { name: "Connect Wallet" }).click();
+
+  await expect(page.getByRole("button", { name: "Connecting..." })).toBeDisabled();
+  await expect(page.locator(".wallet-picker")).toBeVisible();
+});
+
+test("wallet picker does not show a stray MetaMask entry for Firefox-style Phantom provider arrays", async ({ page }) => {
+  await page.addInitScript(() => {
+    const storageKey = "liberdus-airdrop-ui-config";
+    const current = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      ...current,
+      chainId: 56,
+      networkName: "BNB Smart Chain",
+      rpcUrl: "https://bsc-dataseed.binance.org",
+      explorerBaseUrl: "https://bscscan.com",
+      nativeCurrency: {
+        name: "BNB",
+        symbol: "BNB",
+        decimals: 18,
+      },
+    }));
+
+    const icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%2353f3c3'/%3E%3C/svg%3E";
+
+    window.ethereum.providers = [window.ethereum];
+    window.ethereum.isMetaMask = true;
+    window.ethereum.isPhantom = false;
+    window.phantom = { ethereum: window.ethereum };
+
+    window.addEventListener("eip6963:requestProvider", () => {
+      const provider = {
+        get isPhantom() {
+          return true;
+        },
+        request(args) {
+          return window.ethereum.request(args);
+        },
+        on(...args) {
+          return window.ethereum.on(...args);
+        },
+        removeListener(...args) {
+          return window.ethereum.removeListener(...args);
+        },
+        off(...args) {
+          return window.ethereum.off?.(...args);
+        },
+        once(...args) {
+          return window.ethereum.once?.(...args);
+        },
+      };
+
+      window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
+        detail: {
+          info: {
+            uuid: "firefox-phantom-wallet",
+            name: "Phantom Wallet",
+            icon,
+            rdns: "com.phantom.browser",
+          },
+          provider,
+        },
+      }));
+    });
+  });
+
+  await page.goto("index.html");
+  await page.getByRole("button", { name: "Connect Wallet" }).click();
+
+  await expect(page.locator(".wallet-picker-option", { hasText: "Phantom Wallet" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /MetaMask/i })).toHaveCount(0);
+  await expect(page.locator(".wallet-picker-option", { hasText: "Phantom Wallet" })).toBeDisabled();
+});
+
 test("wallet picker removes a stale legacy entry once a later Phantom match is found", async ({ page }) => {
   await page.addInitScript(() => {
     let legacyLooksLikePhantom = false;

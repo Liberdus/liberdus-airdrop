@@ -13,6 +13,10 @@ function createWalletInitials(name) {
   return parts.map((part) => part[0]?.toUpperCase() || "").join("");
 }
 
+function createWalletReasonId(walletId) {
+  return `walletPickerReason-${String(walletId || "wallet").replace(/[^a-z0-9_-]+/gi, "-")}`;
+}
+
 function ensureWalletPicker() {
   if (walletPickerElements) return walletPickerElements;
 
@@ -91,6 +95,7 @@ function createWalletOption(wallet, selectedWalletId) {
   button.type = "button";
   button.className = "wallet-picker-option";
   button.dataset.walletId = wallet.id;
+  button.disabled = Boolean(wallet.isDisabled);
 
   const iconShell = document.createElement("span");
   iconShell.className = "wallet-picker-icon-shell";
@@ -121,6 +126,16 @@ function createWalletOption(wallet, selectedWalletId) {
   label.className = "wallet-picker-name";
   label.textContent = wallet.info?.name || "Injected Wallet";
   copy.append(label);
+
+  if (wallet.disabledReason) {
+    const reason = document.createElement("span");
+    reason.className = "wallet-picker-reason";
+    reason.id = createWalletReasonId(wallet.id);
+    reason.textContent = wallet.disabledReason;
+    copy.append(reason);
+    button.setAttribute("aria-describedby", reason.id);
+    button.title = wallet.disabledReason;
+  }
 
   if (wallet.id === selectedWalletId) {
     const badge = document.createElement("span");
@@ -172,7 +187,7 @@ export function promptForWalletSelection({
     const button = event.target instanceof Element
       ? event.target.closest("[data-wallet-id]")
       : null;
-    if (!button) return;
+    if (!button || button.disabled) return;
 
     closeWalletPicker(button.dataset.walletId || null);
   };
@@ -199,7 +214,7 @@ export function promptForWalletSelection({
   document.body.classList.add("wallet-picker-open");
   elements.overlay.hidden = false;
 
-  const firstOption = elements.list.querySelector("[data-wallet-id]");
+  const firstOption = elements.list.querySelector("[data-wallet-id]:not(:disabled)");
   window.setTimeout(() => {
     if (firstOption instanceof HTMLElement) {
       firstOption.focus();

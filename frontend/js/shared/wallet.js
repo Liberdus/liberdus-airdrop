@@ -86,8 +86,27 @@ function applyNetworkToRuntime(runtime, network) {
   runtime.chainName = resolveChainName(runtime, runtime.chainId, network.name);
 }
 
+function matchesWalletNamespaceProvider(namespaceProvider, provider) {
+  if (!namespaceProvider || !provider) return false;
+  if (namespaceProvider === provider) return true;
+
+  const namespaceProviders = Array.isArray(namespaceProvider.providers)
+    ? namespaceProvider.providers
+    : [];
+  const candidateProviders = Array.isArray(provider.providers)
+    ? provider.providers
+    : [];
+
+  return namespaceProviders.includes(provider) || candidateProviders.includes(namespaceProvider);
+}
+
+function isPhantomNamespaceProvider(provider) {
+  if (typeof window === "undefined") return false;
+  return matchesWalletNamespaceProvider(window.phantom?.ethereum, provider);
+}
+
 function guessLegacyWalletName(provider) {
-  if (provider?.isPhantom) return "Phantom";
+  if (provider?.isPhantom || isPhantomNamespaceProvider(provider)) return "Phantom";
   if (provider?.isRabby) return "Rabby";
   if (provider?.isCoinbaseWallet) return "Coinbase Wallet";
   if (provider?.isBraveWallet) return "Brave Wallet";
@@ -98,7 +117,7 @@ function guessLegacyWalletName(provider) {
 }
 
 function guessLegacyWalletRdns(provider) {
-  if (provider?.isPhantom) return "app.phantom";
+  if (provider?.isPhantom || isPhantomNamespaceProvider(provider)) return "com.phantom.browser";
   if (provider?.isRabby) return "io.rabby";
   if (provider?.isCoinbaseWallet) return "com.coinbase.wallet";
   if (provider?.isBraveWallet) return "com.brave.wallet";
@@ -119,6 +138,64 @@ function normalizeWalletInfo(info = {}) {
     icon: String(info.icon || "").trim(),
     rdns: normalizeWalletIdentityValue(info.rdns),
   };
+}
+
+function isBnbChainConfig(config) {
+  const chainId = Number(config?.chainId);
+  return chainId === 56 || chainId === 97;
+}
+
+function getConfiguredNetworkLabel(config) {
+  return String(config?.networkName || "").trim() || "the configured network";
+}
+
+function isPhantomWallet(wallet) {
+  if (!wallet) return false;
+
+  const name = normalizeWalletIdentityValue(wallet.info?.name);
+  const rdns = normalizeWalletIdentityValue(wallet.info?.rdns);
+  return name.includes("phantom")
+    || rdns.includes("phantom")
+    || Boolean(wallet.provider?.isPhantom)
+    || isPhantomNamespaceProvider(wallet.provider);
+}
+
+function getWalletCompatibility(config, wallet) {
+  if (!wallet) {
+    return {
+      isSupported: true,
+      isDisabled: false,
+      disabledReason: "",
+      errorMessage: "",
+    };
+  }
+
+  if (isBnbChainConfig(config) && isPhantomWallet(wallet)) {
+    const networkLabel = getConfiguredNetworkLabel(config);
+    const walletName = wallet.info?.name || "This wallet";
+    return {
+      isSupported: false,
+      isDisabled: true,
+      disabledReason: `Doesn't support ${networkLabel}.`,
+      errorMessage: `${walletName} does not support ${networkLabel}.`,
+    };
+  }
+
+  return {
+    isSupported: true,
+    isDisabled: false,
+    disabledReason: "",
+    errorMessage: "",
+  };
+}
+
+function assertWalletSupported(config, wallet) {
+  const compatibility = getWalletCompatibility(config, wallet);
+  if (!compatibility.isSupported) {
+    throw new Error(compatibility.errorMessage);
+  }
+
+  return compatibility;
 }
 
 function mergeWalletInfo(primary = {}, secondary = {}) {
@@ -390,18 +467,25 @@ function registerLegacyWallet(provider, index = 0) {
 function collectLegacyWallets() {
   if (!window.ethereum) return [];
 
+  const namespaceProviders = [...new Set([window.phantom?.ethereum].filter(Boolean))];
   const rawProviders = Array.isArray(window.ethereum.providers) && window.ethereum.providers.length
     ? window.ethereum.providers
     : [];
-  const uniqueProviders = [...new Set(rawProviders.filter(Boolean))];
+  const uniqueProviders = [...new Set(rawProviders.filter(Boolean))]
+    .filter((provider) => !(namespaceProviders.length && provider === window.ethereum && !namespaceProviders.includes(provider)));
+  const candidateProviders = [...new Set([...namespaceProviders, ...uniqueProviders])];
 
-  if (uniqueProviders.length) {
-    return uniqueProviders
+  if (candidateProviders.length) {
+    return candidateProviders
       .map((provider, index) => registerLegacyWallet(provider, index))
       .filter(Boolean);
   }
 
   if (hasDiscoveredEip6963Wallets()) {
+    return [];
+  }
+
+  if (namespaceProviders.length) {
     return [];
   }
 
@@ -503,13 +587,18 @@ async function resolveWalletById(walletId) {
   return wallets.find((wallet) => wallet.id === resolveWalletAlias(walletId)) || null;
 }
 
-export async function getAvailableWallets() {
+export async function getAvailableWallets(config = null) {
   const wallets = await discoverWallets();
-  return wallets.map((wallet) => ({
-    id: wallet.id,
-    source: wallet.source,
-    info: { ...wallet.info },
-  }));
+  return wallets.map((wallet) => {
+    const compatibility = getWalletCompatibility(config, wallet);
+    return {
+      id: wallet.id,
+      source: wallet.source,
+      info: { ...wallet.info },
+      isDisabled: compatibility.isDisabled,
+      disabledReason: compatibility.disabledReason,
+    };
+  });
 }
 
 export async function ensureProvider(runtime) {
@@ -543,6 +632,8 @@ export async function connectWallet(runtime, walletId) {
     throw new Error("The selected wallet is no longer available. Refresh the page and try again.");
   }
 
+  assertWalletSupported(runtime?.config, wallet);
+
   applyActiveWallet(runtime, wallet);
 
   const provider = await ensureProvider(runtime);
@@ -573,7 +664,15 @@ export async function disconnectWallet(runtime) {
 
 export async function syncWalletState(runtime) {
   const session = getWalletSession();
-  const selectedWallet = session?.walletId ? await resolveWalletById(session.walletId) : null;
+  let selectedWallet = session?.walletId ? await resolveWalletById(session.walletId) : null;
+
+  if (selectedWallet) {
+    try {
+      assertWalletSupported(runtime?.config, selectedWallet);
+    } catch {
+      selectedWallet = null;
+    }
+  }
 
   if (session?.walletId && !selectedWallet) {
     clearWalletSession();
