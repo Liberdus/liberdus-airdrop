@@ -41,6 +41,9 @@ function installHardhatBackedWalletMock(config) {
   const CONNECTED_STORAGE_KEY = "__liberdus_mock_wallet_connected__";
   const ACCOUNT_STORAGE_KEY = "__liberdus_mock_wallet_account__";
   const CHAIN_STORAGE_KEY = "__liberdus_mock_wallet_chain__";
+  const discoveryMode = ["eip6963-only", "manual-eip6963"].includes(config.discoveryMode)
+    ? config.discoveryMode
+    : "legacy";
   const listenerMap = new Map();
   const queuedFailures = new Map();
   const knownChains = new Set([String(config.chainId).toLowerCase()]);
@@ -274,9 +277,34 @@ function installHardhatBackedWalletMock(config) {
 
   const provider = new HardhatBackedEthereumProvider();
 
-  Object.defineProperty(globalWindow, "ethereum", {
+  const announceEip6963Provider = () => {
+    globalWindow.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
+      detail: {
+        info: {
+          uuid: "liberdus-e2e-metamask",
+          name: "MetaMask",
+          icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%23f6851b'/%3E%3C/svg%3E",
+          rdns: "io.metamask",
+        },
+        provider,
+      },
+    }));
+  };
+
+  if (discoveryMode === "legacy") {
+    Object.defineProperty(globalWindow, "ethereum", {
+      configurable: false,
+      enumerable: true,
+      writable: false,
+      value: provider,
+    });
+  } else if (discoveryMode === "eip6963-only") {
+    globalWindow.addEventListener("eip6963:requestProvider", announceEip6963Provider);
+  }
+
+  Object.defineProperty(globalWindow, "__liberdusMockWalletProvider", {
     configurable: false,
-    enumerable: true,
+    enumerable: false,
     writable: false,
     value: provider,
   });
@@ -348,10 +376,13 @@ function installHardhatBackedWalletMock(config) {
 
   localStorage.setItem(config.storageKey, JSON.stringify(mergedUiConfig));
 
-  window.dispatchEvent(new Event("ethereum#initialized"));
+  if (discoveryMode === "legacy") {
+    window.dispatchEvent(new Event("ethereum#initialized"));
+  }
 }
 
 const test = base.extend({
+  walletDiscoveryMode: ["legacy", { option: true }],
   hardhatChain: [async ({}, use) => {
     await resetLocalChain();
     resetE2eDatabaseFile();
@@ -385,11 +416,12 @@ const test = base.extend({
     },
     { auto: true },
   ],
-  context: async ({ context }, use) => {
+  context: async ({ context, walletDiscoveryMode }, use) => {
     await context.addInitScript(installHardhatBackedWalletMock, {
       account: MOCK_WALLETS.owner,
       chainId: toHexChainId(1337),
       rpcUrl: RPC_URL,
+      discoveryMode: walletDiscoveryMode,
       storageKey: STORAGE_KEY,
       apiBaseUrl: E2E_BACKEND_ORIGIN,
       explorerBaseUrl: "https://explorer.local.test",
@@ -423,7 +455,10 @@ const test = base.extend({
         );
       },
       async connect(page) {
-        return page.evaluate(() => window.ethereum.request({ method: "eth_requestAccounts" }));
+        return page.evaluate(() => {
+          const provider = window.ethereum || window.__liberdusMockWalletProvider;
+          return provider.request({ method: "eth_requestAccounts" });
+        });
       },
       async failNextRequest(page, method, failure) {
         return page.evaluate(

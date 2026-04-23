@@ -573,6 +573,7 @@ function ensureReadProvider() {
 
 const logger = { log: setMessage, clear: clearMessage };
 const reportError = createErrorReporter(logger.log, () => runtime);
+let configReadyPromise = Promise.resolve();
 let pageInitPromise = Promise.resolve();
 
 function updateToastOffset() {
@@ -1272,18 +1273,27 @@ function bindEvents() {
       return;
     }
 
+    if (runtime.isConnectingWallet) {
+      return;
+    }
+
     try {
-      const wallets = await getAvailableWallets();
+      runtime.isConnectingWallet = true;
+      syncWalletButton();
+      await configReadyPromise;
+      const wallets = await getAvailableWallets(runtime.config);
       const selectedWalletId = await promptForWalletSelection({
         wallets,
         selectedWalletId: runtime.selectedWalletId,
         title: "Select Wallet",
       });
 
-      if (!selectedWalletId) return;
+      if (!selectedWalletId) {
+        runtime.isConnectingWallet = false;
+        syncWalletButton();
+        return;
+      }
 
-      runtime.isConnectingWallet = true;
-      syncWalletButton();
       await connectWallet(runtime, selectedWalletId);
       await pageInitPromise;
       runtime.isConnectingWallet = false;
@@ -1390,6 +1400,7 @@ function bindEvents() {
 
   bindWalletEvents({
     onAccountsChanged: async () => {
+      if (runtime.isConnectingWallet) return;
       runtime.claimInFlightEpoch = null;
       hideClaimCelebration({ restoreFocus: false, immediate: true });
       await refreshPage();
@@ -1430,16 +1441,20 @@ async function init() {
   bindEvents();
   updateToastOffset();
 
+  configReadyPromise = (async () => {
+    const loaded = await loadUiConfig();
+    runtime.config = loaded.config;
+    runtime.configSource = loaded.source;
+    runtime.readProvider = null;
+    runtime.readProviderKey = null;
+    syncXSessionFromStorage();
+    syncXAuthCard();
+  })();
+
   pageInitPromise = (async () => {
     updateToastOffset();
     try {
-      const loaded = await loadUiConfig();
-      runtime.config = loaded.config;
-      runtime.configSource = loaded.source;
-      runtime.readProvider = null;
-      runtime.readProviderKey = null;
-      syncXSessionFromStorage();
-      syncXAuthCard();
+      await configReadyPromise;
 
       try {
         const xAuthResult = await completeXLoginIfPresent(runtime.config);

@@ -295,6 +295,7 @@ function clearMessage() {
 
 const logger = { log: setMessage, clear: clearMessage };
 const reportError = createErrorReporter(logger.log, () => runtime);
+let configReadyPromise = Promise.resolve();
 let pageInitPromise = Promise.resolve();
 const ADMIN_LINKED_WALLET_PAGE_SIZE = 200;
 const ADMIN_ACCOUNTS_TEMPLATE_CSV = [
@@ -2099,18 +2100,27 @@ function bindEvents() {
       return;
     }
 
+    if (runtime.isConnectingWallet) {
+      return;
+    }
+
     try {
-      const wallets = await getAvailableWallets();
+      runtime.isConnectingWallet = true;
+      syncWalletButton();
+      await configReadyPromise;
+      const wallets = await getAvailableWallets(runtime.config);
       const selectedWalletId = await promptForWalletSelection({
         wallets,
         selectedWalletId: runtime.selectedWalletId,
         title: "Select Wallet",
       });
 
-      if (!selectedWalletId) return;
+      if (!selectedWalletId) {
+        runtime.isConnectingWallet = false;
+        syncWalletButton();
+        return;
+      }
 
-      runtime.isConnectingWallet = true;
-      syncWalletButton();
       await connectWallet(runtime, selectedWalletId);
       await pageInitPromise;
       await tryAutoSwitchAfterConnect();
@@ -2714,6 +2724,7 @@ function bindEvents() {
 
   bindWalletEvents({
     onAccountsChanged: async () => {
+      if (runtime.isConnectingWallet) return;
       await refreshPage();
       clearMessage();
     },
@@ -2747,12 +2758,16 @@ async function init() {
   renderClaimLookupResults();
   syncAdminTabs();
 
+  configReadyPromise = (async () => {
+    const loaded = await loadUiConfig();
+    runtime.config = loaded.config;
+    runtime.configSource = loaded.source;
+  })();
+
   pageInitPromise = (async () => {
     updateToastOffset();
     try {
-      const loaded = await loadUiConfig();
-      runtime.config = loaded.config;
-      runtime.configSource = loaded.source;
+      await configReadyPromise;
       await ensureProvider(runtime).catch(() => null);
       await refreshPage();
     } catch (error) {
