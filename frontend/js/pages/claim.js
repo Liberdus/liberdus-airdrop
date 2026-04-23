@@ -1390,6 +1390,7 @@ function bindEvents() {
 
   bindWalletEvents({
     onAccountsChanged: async () => {
+      if (runtime.isConnectingWallet) return;
       runtime.claimInFlightEpoch = null;
       hideClaimCelebration({ restoreFocus: false, immediate: true });
       await refreshPage();

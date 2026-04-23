@@ -2714,6 +2714,7 @@ function bindEvents() {
 
   bindWalletEvents({
     onAccountsChanged: async () => {
+      if (runtime.isConnectingWallet) return;
       await refreshPage();
       clearMessage();
     },

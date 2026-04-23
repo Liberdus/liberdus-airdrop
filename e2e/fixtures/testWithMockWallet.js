@@ -41,7 +41,9 @@ function installHardhatBackedWalletMock(config) {
   const CONNECTED_STORAGE_KEY = "__liberdus_mock_wallet_connected__";
   const ACCOUNT_STORAGE_KEY = "__liberdus_mock_wallet_account__";
   const CHAIN_STORAGE_KEY = "__liberdus_mock_wallet_chain__";
-  const discoveryMode = config.discoveryMode === "eip6963-only" ? "eip6963-only" : "legacy";
+  const discoveryMode = ["eip6963-only", "manual-eip6963"].includes(config.discoveryMode)
+    ? config.discoveryMode
+    : "legacy";
   const listenerMap = new Map();
   const queuedFailures = new Map();
   const knownChains = new Set([String(config.chainId).toLowerCase()]);
@@ -289,14 +291,14 @@ function installHardhatBackedWalletMock(config) {
     }));
   };
 
-  if (discoveryMode !== "eip6963-only") {
+  if (discoveryMode === "legacy") {
     Object.defineProperty(globalWindow, "ethereum", {
       configurable: false,
       enumerable: true,
       writable: false,
       value: provider,
     });
-  } else {
+  } else if (discoveryMode === "eip6963-only") {
     globalWindow.addEventListener("eip6963:requestProvider", announceEip6963Provider);
   }
 
@@ -374,7 +376,7 @@ function installHardhatBackedWalletMock(config) {
 
   localStorage.setItem(config.storageKey, JSON.stringify(mergedUiConfig));
 
-  if (discoveryMode !== "eip6963-only") {
+  if (discoveryMode === "legacy") {
     window.dispatchEvent(new Event("ethereum#initialized"));
   }
 }
