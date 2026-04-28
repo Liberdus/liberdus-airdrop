@@ -141,8 +141,8 @@
     <main class="shell shell-narrow">
       <div class="center-stage">
         <section class="frame claim-card">
-          <section class="claim-card-block">
-            <div id="xAuthCard" class="x-auth-card">
+          <section id="xAuthBlock" class="claim-card-block" hidden>
+            <div id="xAuthCard" class="x-auth-card" hidden>
               <div class="x-auth-copy">
                 <div>
                   <h2>Sign In With X</h2>
@@ -176,13 +176,19 @@
             </div>
           </section>
 
-          <section class="claim-card-block">
+          <section id="availableClaimsBlock" class="claim-card-block">
             <div class="panel-title-row">
               <div>
                 <h2>Available Claims</h2>
               </div>
             </div>
-            <div id="roundList" class="round-list"></div>
+            <div id="roundList" class="round-list">
+              <article class="round-card muted rewards-loading-card" aria-busy="true" aria-live="polite">
+                <h3 class="rewards-loading-title">
+                  Loading Rewards<span class="loading-ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
+                </h3>
+              </article>
+            </div>
           </section>
         </section>
       </div>

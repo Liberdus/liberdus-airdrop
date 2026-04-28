@@ -72,6 +72,8 @@ const runtime = {
   claimCelebrationStage: "idle",
   isConnectingWallet: false,
   isConnectingX: false,
+  isLoadingRewards: true,
+  rewardsErrorMessage: "",
   isSubmittingXWalletLink: false,
   xSession: null,
   noticeTimerId: null,
@@ -86,6 +88,7 @@ const CLAIM_CELEBRATION_HIDE_DELAY = 220;
 const CLAIM_AMOUNT_ANIMATION_MS = 1350;
 const TOKEN_RAIN_IMAGE_URL = new URL("../../assets/liberdus-logo.png", import.meta.url).href;
 const DEFAULT_CELEBRATION_MESSAGE = "Keep following Liberdus on our social channels to stay eligible for future rewards.";
+const X_RECOVERY_RECEIVED_MESSAGE = "Your response has been received. You may be eligible for future airdrop rounds.";
 const DEFAULT_SOCIAL_LINKS = Object.freeze([
   { label: "Follow on X", href: "https://x.com/liberdus" },
   { label: "Join Telegram", href: "https://t.me/LiberdusOfficial" },
@@ -101,6 +104,7 @@ const els = {
   adminPageButton: document.getElementById("adminPageButton"),
   copyWalletAddressButton: document.getElementById("copyWalletAddressButton"),
   disconnectButton: document.getElementById("disconnectButton"),
+  availableClaimsBlock: document.getElementById("availableClaimsBlock"),
   roundList: document.getElementById("roundList"),
   addTokenLink: document.getElementById("addTokenLink"),
   tokenExplorerLink: document.getElementById("tokenExplorerLink"),
@@ -122,6 +126,7 @@ const els = {
   claimCelebrationClose: document.getElementById("claimCelebrationClose"),
   claimCelebrationContinue: document.getElementById("claimCelebrationContinue"),
   switchNetworkButton: document.getElementById("switchNetworkButton"),
+  xAuthBlock: document.getElementById("xAuthBlock"),
   xAuthCard: document.getElementById("xAuthCard"),
   xAuthHint: document.getElementById("xAuthHint"),
   xAuthIdentity: document.getElementById("xAuthIdentity"),
@@ -599,12 +604,18 @@ function shouldOfferXRecovery() {
   return !hasAnyOnchainClaimEntry();
 }
 
+function isXRecoveryOffered() {
+  if (runtime.isLoadingRewards) return false;
+  if (runtime.rewardsErrorMessage) return false;
+  return runtime.config?.xAuth?.enabled !== false && shouldOfferXRecovery();
+}
+
 function formatXLinkStatus(linkResult) {
   if (!linkResult) {
     return "";
   }
 
-  return "Thanks. We received your wallet and X account and will review it.";
+  return X_RECOVERY_RECEIVED_MESSAGE;
 }
 
 function getSignedInXAccount() {
@@ -638,7 +649,7 @@ function formatExistingFormWalletStatus(account = getSignedInXAccount()) {
 }
 
 function formatExistingRecoveryStatus() {
-  return "We already received a response for this X account.";
+  return X_RECOVERY_RECEIVED_MESSAGE;
 }
 
 function syncXSessionFromStorage() {
@@ -656,7 +667,10 @@ function syncXSessionFromStorage() {
 function syncXAuthCard() {
   if (!els.xAuthCard) return;
 
-  const xAuthEnabled = runtime.config?.xAuth?.enabled !== false && shouldOfferXRecovery();
+  const xAuthEnabled = isXRecoveryOffered();
+  if (els.xAuthBlock) {
+    els.xAuthBlock.hidden = !xAuthEnabled;
+  }
   els.xAuthCard.hidden = !xAuthEnabled;
   if (!xAuthEnabled) return;
 
@@ -1050,10 +1064,48 @@ function getRoundActionMeta(round) {
   }
 }
 
+function getRewardsLoadingMarkup() {
+  return `
+    <article class="round-card muted rewards-loading-card" aria-busy="true" aria-live="polite">
+      <h3 class="rewards-loading-title">
+        Loading Rewards<span class="loading-ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
+      </h3>
+    </article>
+  `;
+}
+
+function getRewardsErrorMarkup() {
+  return `
+    <article class="round-card muted" aria-live="polite">
+      <p class="round-title">Rewards could not be loaded.</p>
+      <p class="round-meta">Check your connection, then refresh this page.</p>
+    </article>
+  `;
+}
+
 function renderRoundList() {
   const visibleRounds = getVisibleRounds();
+  const showOnlyXRecovery = !visibleRounds.length && isXRecoveryOffered();
+  if (els.availableClaimsBlock) {
+    els.availableClaimsBlock.hidden = showOnlyXRecovery;
+  }
+
+  if (runtime.isLoadingRewards) {
+    els.roundList.innerHTML = getRewardsLoadingMarkup();
+    return;
+  }
+
+  if (runtime.rewardsErrorMessage) {
+    els.roundList.innerHTML = getRewardsErrorMarkup();
+    return;
+  }
 
   if (!visibleRounds.length) {
+    if (showOnlyXRecovery) {
+      els.roundList.replaceChildren();
+      return;
+    }
+
     const title = runtime.account
       ? "Nothing available right now."
       : "Connect your wallet to check for claims.";
@@ -1099,6 +1151,15 @@ function renderRoundList() {
       });
     });
   });
+}
+
+function setRewardsLoading(isLoading) {
+  runtime.isLoadingRewards = isLoading;
+  if (isLoading) {
+    runtime.rewardsErrorMessage = "";
+  }
+  renderRoundList();
+  syncXAuthCard();
 }
 
 async function buildRoundView(storedRound) {
@@ -1162,22 +1223,29 @@ async function buildRoundView(storedRound) {
 }
 
 async function refreshRounds() {
-  if (!runtime.account || !isClaimsApiConfigured(runtime.config)) {
+  try {
+    if (!runtime.account || !isClaimsApiConfigured(runtime.config)) {
+      runtime.rounds = [];
+      runtime.rewardsErrorMessage = "";
+      return;
+    }
+
+    const payload = await fetchWalletClaimRounds(runtime.config, runtime.account);
+    const storedRounds = Array.isArray(payload?.rounds) ? payload.rounds : [];
+    runtime.rounds = await Promise.all(storedRounds.map((round) => buildRoundView(round)));
+    runtime.rewardsErrorMessage = "";
+  } catch {
     runtime.rounds = [];
+    runtime.rewardsErrorMessage = "Rewards could not be loaded.";
+  } finally {
+    runtime.isLoadingRewards = false;
     renderRoundList();
     syncXAuthCard();
-    return;
   }
-
-  const payload = await fetchWalletClaimRounds(runtime.config, runtime.account);
-  const storedRounds = Array.isArray(payload?.rounds) ? payload.rounds : [];
-  runtime.rounds = await Promise.all(storedRounds.map((round) => buildRoundView(round)));
-
-  renderRoundList();
-  syncXAuthCard();
 }
 
 async function refreshPage() {
+  setRewardsLoading(true);
   await syncWalletState(runtime);
 
   try {

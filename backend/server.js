@@ -41,6 +41,7 @@ const ADMIN_ACCESS_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 const MAX_JSON_BODY_BYTES = 32 * 1024;
 const MAX_IMPORT_BODY_BYTES = 5 * 1024 * 1024;
 const MAX_AIRDROP_ROUND_SAVE_BODY_BYTES = 5 * 1024 * 1024;
+const X_RECOVERY_RECEIVED_MESSAGE = "Your response has been received. You may be eligible for future airdrop rounds.";
 const RATE_LIMITS = {
   start: { limit: 12, windowMs: 10 * 60 * 1000 },
   callback: { limit: 24, windowMs: 10 * 60 * 1000 },
@@ -1002,11 +1003,11 @@ function getExistingWalletMessage(account) {
     return `We already have a wallet on file for this X account: ${account.walletAddress}.`;
   }
 
-  return "We already received a response for this X account.";
+  return X_RECOVERY_RECEIVED_MESSAGE;
 }
 
 function getExistingRecoverySubmissionMessage() {
-  return "We already received a response for this X account.";
+  return X_RECOVERY_RECEIVED_MESSAGE;
 }
 
 function getRequiredDeploymentKey() {
