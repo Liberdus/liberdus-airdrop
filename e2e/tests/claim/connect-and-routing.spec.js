@@ -7,9 +7,18 @@ test("@smoke claimant page connects owner and links to admin", async ({ page }) 
   await expect(page.getByText("Connect your wallet to check for claims.")).toBeVisible();
   await connectViaWalletPicker(page);
 
+  const configuredAirdropAddress = await page.evaluate(async () => {
+    const response = await fetch("config.local.json", { cache: "no-store" });
+    const config = await response.json();
+    return config.airdropAddress;
+  });
+
   await expect(page.getByRole("button", { name: /0xf39f\.\.\.2266/i })).toBeVisible();
   await expect(page.locator("#addTokenLink")).toBeVisible();
-  await expect(page.locator("#tokenExplorerLink")).toHaveAttribute("href", /https:\/\/explorer\.local\.test\/address\/0x/i);
+  await expect(page.locator("#tokenExplorerLink")).toHaveAttribute(
+    "href",
+    `https://explorer.local.test/address/${configuredAirdropAddress}`,
+  );
 
   await openWalletMenu(page, /0xf39f\.\.\.2266/i);
   await expect(page.getByRole("button", { name: "Open Admin" })).toBeVisible();
