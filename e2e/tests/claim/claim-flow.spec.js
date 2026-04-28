@@ -1,5 +1,5 @@
 const { expect, test, toHexChainId } = require("../../fixtures/testWithMockWallet");
-const { connectViaWalletPicker, startAirdropFromUpload } = require("../helpers");
+const { connectViaWalletPicker, enableXRecovery, startAirdropFromUpload } = require("../helpers");
 
 test("@smoke claimant can claim from the wrong network after wallet switch", async ({ page, e2eClaimsFile, mockWallet }) => {
   await page.goto("admin.html");
@@ -27,7 +27,24 @@ test("@smoke claimant can claim from the wrong network after wallet switch", asy
   await expect(page.getByRole("button", { name: "Already Claimed" })).toBeVisible();
 });
 
-test("claimant outsider sees the generic empty state", async ({ page, e2eClaimsFile, mockWallet }) => {
+test("claim page does not show X recovery before wallet state is known", async ({ page, hardhatChain }) => {
+  await enableXRecovery(page, hardhatChain.backendUrl);
+  await page.route("**/js/pages/claim.js", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/javascript",
+      body: "",
+    });
+  });
+
+  await page.goto("index.html");
+
+  await expect(page.getByRole("heading", { name: "Sign In With X" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Available Claims" })).toBeVisible();
+  await expect(page.getByText(/Loading Rewards/)).toBeVisible();
+});
+
+test("claimant outsider sees the generic empty state when X recovery is disabled", async ({ page, e2eClaimsFile, mockWallet }) => {
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
   await startAirdropFromUpload(page, e2eClaimsFile);
@@ -38,4 +55,64 @@ test("claimant outsider sees the generic empty state", async ({ page, e2eClaimsF
   await expect(page.getByRole("button", { name: /0x9965\.\.\.a4dc/i })).toBeVisible();
   await expect(page.getByText("Nothing available right now.")).toBeVisible();
   await expect(page.getByText("If anything is available for this wallet, it will appear here.")).toBeVisible();
+});
+
+test("claimant sees refresh guidance when rewards lookup fails", async ({ page, hardhatChain, mockWallet }) => {
+  await enableXRecovery(page, hardhatChain.backendUrl);
+  await page.route("**/api/claims/wallet/**", async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Claims API unavailable." }),
+    });
+  });
+
+  await page.goto("index.html");
+  await mockWallet.setAccount(page, mockWallet.accounts.outsider);
+  await connectViaWalletPicker(page);
+
+  await expect(page.getByRole("button", { name: /0x9965\.\.\.a4dc/i })).toBeVisible();
+  await expect(page.getByText("Rewards could not be loaded.")).toBeVisible();
+  await expect(page.getByText("Check your connection, then refresh this page.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign In With X" })).toHaveCount(0);
+  await expect(page.getByText("Nothing available right now.")).toHaveCount(0);
+});
+
+test("claimant outsider sees X recovery without the generic empty state when enabled", async ({
+  page,
+  e2eClaimsFile,
+  hardhatChain,
+  mockWallet,
+}) => {
+  await enableXRecovery(page, hardhatChain.backendUrl);
+
+  await page.goto("admin.html");
+  await connectViaWalletPicker(page);
+  await startAirdropFromUpload(page, e2eClaimsFile);
+
+  let releaseClaimsLookup;
+  const claimsLookupCanContinue = new Promise((resolve) => {
+    releaseClaimsLookup = resolve;
+  });
+  await page.route("**/api/claims/wallet/**", async (route) => {
+    await claimsLookupCanContinue;
+    await route.continue();
+  });
+
+  await mockWallet.setAccount(page, mockWallet.accounts.outsider);
+  await page.goto("index.html");
+
+  await expect(page.getByRole("button", { name: /0x9965\.\.\.a4dc/i })).toBeVisible();
+  await expect(page.getByText(/Loading Rewards/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign In With X" })).toHaveCount(0);
+
+  releaseClaimsLookup();
+
+  await expect(page.getByRole("heading", { name: "Sign In With X" })).toBeVisible();
+  await expect(page.getByText("No claim was found for this wallet. Sign in with X to start follower recovery.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign in with X" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Available Claims" })).toHaveCount(0);
+  await expect(page.getByText(/Loading Rewards/)).toHaveCount(0);
+  await expect(page.getByText("Nothing available right now.")).toHaveCount(0);
+  await expect(page.getByText("If anything is available for this wallet, it will appear here.")).toHaveCount(0);
 });

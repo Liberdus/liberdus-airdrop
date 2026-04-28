@@ -1,8 +1,40 @@
 const { expect } = require("@playwright/test");
 
+const UI_CONFIG_STORAGE_KEY = "liberdus-airdrop-ui-config";
+const X_AUTH_SESSION_KEY = "liberdus-airdrop-x-auth-session";
+
 async function connectViaWalletPicker(page) {
   await page.getByRole("button", { name: "Connect Wallet" }).click();
   await page.getByRole("button", { name: /MetaMask/i }).click();
+}
+
+async function enableXRecovery(page, backendUrl) {
+  await page.addInitScript(({ storageKey, nextBackendUrl }) => {
+    const current = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+    const currentXAuth = current.xAuth && typeof current.xAuth === "object" ? current.xAuth : {};
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      ...current,
+      xAuth: {
+        ...currentXAuth,
+        enabled: true,
+        backendUrl: nextBackendUrl,
+      },
+    }));
+  }, { storageKey: UI_CONFIG_STORAGE_KEY, nextBackendUrl: backendUrl });
+}
+
+async function mockXAuthSession(page, sessionPayload) {
+  await page.route("**/api/x/session", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(sessionPayload),
+    });
+  });
+
+  await page.addInitScript(({ storageKey, session }) => {
+    window.sessionStorage.setItem(storageKey, JSON.stringify(session));
+  }, { storageKey: X_AUTH_SESSION_KEY, session: sessionPayload });
 }
 
 async function openWalletMenu(page, addressPattern) {
@@ -56,8 +88,10 @@ async function startAirdropFromUpload(page, claimsFile, { deadlineSelector = "#s
 
 module.exports = {
   connectViaWalletPicker,
+  enableXRecovery,
   getLocalDateTimeInputValue,
   getUtcDateTimeInputValue,
+  mockXAuthSession,
   openWalletMenu,
   setFutureDeadline,
   startAirdropFromUpload,

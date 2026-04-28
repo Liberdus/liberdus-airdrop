@@ -1,5 +1,7 @@
 const { expect, test } = require("../../fixtures/testWithMockWallet");
-const { connectViaWalletPicker, openWalletMenu } = require("../helpers");
+const { connectViaWalletPicker, enableXRecovery, mockXAuthSession, openWalletMenu } = require("../helpers");
+
+const X_RECOVERY_RECEIVED_MESSAGE = "Your response has been received. You may be eligible for future airdrop rounds.";
 
 test("claimant wallet menu shows the connected address, chain id, and disconnect flow", async ({ page }) => {
   await page.goto("index.html");
@@ -811,6 +813,50 @@ test("connected claimant sees the generic empty state when no rounds have starte
   await expect(page.getByText("Nothing available right now.")).toBeVisible();
   await expect(page.getByText("If anything is available for this wallet, it will appear here.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Claim" })).toHaveCount(0);
+});
+
+test("connected claimant with an existing X recovery response sees the future rounds copy", async ({
+  page,
+  hardhatChain,
+  mockWallet,
+}) => {
+  const sessionPayload = {
+    expiresAt: Date.now() + 60 * 60 * 1000,
+    csrfToken: "test-csrf-token",
+    authenticatedAt: new Date().toISOString(),
+    profile: {
+      id: "12345",
+      name: "Liberdus Fan",
+      username: "liberdus_fan",
+      profileImageUrl: "",
+    },
+    account: null,
+    existingSubmission: {
+      id: "submission-1",
+      xUserId: "12345",
+      usernameAtSubmission: "liberdus_fan",
+      walletAddress: mockWallet.accounts.claimant,
+      wasKnownFollower: true,
+      wasRecoveryCandidate: true,
+      status: "received",
+      submittedAt: new Date().toISOString(),
+    },
+  };
+
+  await enableXRecovery(page, hardhatChain.backendUrl);
+  await mockXAuthSession(page, sessionPayload);
+
+  await page.goto("index.html");
+  await mockWallet.setAccount(page, mockWallet.accounts.claimant);
+  await connectViaWalletPicker(page);
+
+  await expect(page.getByRole("heading", { name: "Sign In With X" })).toBeVisible();
+  await expect(page.getByText("@liberdus_fan")).toBeVisible();
+  await expect(page.getByText(X_RECOVERY_RECEIVED_MESSAGE)).toBeVisible();
+  await expect(page.getByText("We already received a response for this X account.")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Available Claims" })).toHaveCount(0);
+  await expect(page.getByText("Nothing available right now.")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Verify Wallet And Save" })).toHaveCount(0);
 });
 
 test("claimant footer can add the token to MetaMask and hides explorer link when explorerBaseUrl is unset", async ({ page, mockWallet }) => {
