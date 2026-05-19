@@ -33,9 +33,10 @@ export function parseWalletChainId(rawChainId) {
 
   if (typeof rawChainId === "string" && rawChainId.trim()) {
     const normalized = rawChainId.trim().toLowerCase();
-    return normalized.startsWith("0x")
+    const chainId = normalized.startsWith("0x")
       ? Number.parseInt(normalized, 16)
       : Number(normalized);
+    return Number.isFinite(chainId) ? chainId : null;
   }
 
   return null;
