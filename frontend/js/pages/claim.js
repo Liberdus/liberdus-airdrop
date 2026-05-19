@@ -20,6 +20,7 @@ import {
   switchConfiguredNetwork,
   bindWalletEvents,
   getAvailableWallets,
+  parseWalletChainId,
 } from "../shared/wallet.js";
 import { promptForWalletSelection } from "../shared/wallet-picker.js";
 import { fetchWalletClaimRounds, isClaimsApiConfigured } from "../shared/claims.js";
@@ -47,6 +48,7 @@ const runtime = {
   selectedWalletId: null,
   selectedWalletName: null,
   selectedWalletRdns: null,
+  selectedWalletIcon: null,
   owner: null,
   currentEpoch: 0,
   config: {
@@ -977,13 +979,69 @@ function isMetaMaskWalletSelected() {
   return Boolean(provider?.isMetaMask);
 }
 
+function createWalletInitials(name) {
+  const parts = String(name || "Wallet")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+
+  if (!parts.length) return "W";
+  return parts.map((part) => part[0]?.toUpperCase() || "").join("");
+}
+
+function createWalletTriggerIcon() {
+  const iconShell = document.createElement("span");
+  iconShell.className = "wallet-trigger-icon-shell";
+  iconShell.setAttribute("aria-hidden", "true");
+
+  const fallback = document.createElement("span");
+  fallback.className = "wallet-trigger-icon-fallback";
+  fallback.textContent = createWalletInitials(runtime.selectedWalletName);
+  iconShell.append(fallback);
+
+  if (runtime.selectedWalletIcon) {
+    const image = document.createElement("img");
+    image.className = "wallet-trigger-icon";
+    image.src = runtime.selectedWalletIcon;
+    image.alt = "";
+    image.hidden = true;
+    image.addEventListener("load", () => {
+      fallback.hidden = true;
+      image.hidden = false;
+    });
+    image.addEventListener("error", () => {
+      image.remove();
+    });
+    iconShell.prepend(image);
+  }
+
+  return iconShell;
+}
+
+function renderWalletTrigger(label) {
+  if (!runtime.account) {
+    els.connectButton.textContent = label;
+    els.connectButton.removeAttribute("aria-label");
+    return;
+  }
+
+  const labelText = document.createElement("span");
+  labelText.className = "wallet-trigger-label";
+  labelText.textContent = label;
+
+  const walletName = String(runtime.selectedWalletName || "").trim() || "Wallet";
+  els.connectButton.replaceChildren(createWalletTriggerIcon(), labelText);
+  els.connectButton.setAttribute("aria-label", `${walletName} ${label}`);
+}
+
 function syncWalletButton() {
   const label = runtime.account
     ? formatAddressShort(runtime.account)
     : runtime.isConnectingWallet
       ? "Connecting..."
       : "Connect Wallet";
-  els.connectButton.textContent = label;
+  renderWalletTrigger(label);
   els.connectButton.disabled = runtime.isConnectingWallet;
   els.connectButton.setAttribute("aria-busy", runtime.isConnectingWallet ? "true" : "false");
   els.walletMenuAddress.textContent = runtime.account ? formatAddressShort(runtime.account) : "-";
@@ -1476,11 +1534,12 @@ function bindEvents() {
       clearMessage();
     },
     onChainChanged: async (chainId) => {
+      const nextChainId = parseWalletChainId(chainId);
+      if (nextChainId !== null && runtime.chainId === nextChainId) return;
       runtime.claimInFlightEpoch = null;
       hideClaimCelebration({ restoreFocus: false, immediate: true });
-      resetProvider(runtime, chainId ? Number.parseInt(chainId, 16) : null);
+      resetProvider(runtime, nextChainId);
       await refreshPage();
-      clearMessage();
     },
   });
 

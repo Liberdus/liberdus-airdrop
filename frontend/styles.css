@@ -758,7 +758,57 @@ select {
 }
 
 .wallet-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-width: 164px;
+}
+
+.wallet-trigger-icon-shell,
+.wallet-trigger-label {
+  position: relative;
+  z-index: 1;
+}
+
+.wallet-trigger-icon-shell {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 9px;
+  background: rgba(17, 25, 48, 0.14);
+  box-shadow: 0 0 0 1px rgba(17, 25, 48, 0.12) inset;
+}
+
+.wallet-trigger-icon,
+.wallet-trigger-icon-fallback {
+  width: 100%;
+  height: 100%;
+}
+
+.wallet-trigger-icon {
+  object-fit: cover;
+}
+
+.wallet-trigger-icon[hidden] {
+  display: none;
+}
+
+.wallet-trigger-icon-fallback {
+  display: grid;
+  place-items: center;
+  color: #111930;
+  font-family: var(--display);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.wallet-trigger-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .wallet-trigger.is-receiving-claim {
