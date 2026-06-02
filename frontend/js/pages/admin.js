@@ -1009,60 +1009,15 @@ async function copyWalletAddress() {
   logger.log("Wallet address copied.", "success");
 }
 
-function createWalletInitials(name) {
-  const parts = String(name || "Wallet")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2);
-
-  if (!parts.length) return "W";
-  return parts.map((part) => part[0]?.toUpperCase() || "").join("");
-}
-
-function createWalletTriggerIcon() {
-  const iconShell = document.createElement("span");
-  iconShell.className = "wallet-trigger-icon-shell";
-  iconShell.setAttribute("aria-hidden", "true");
-
-  const fallback = document.createElement("span");
-  fallback.className = "wallet-trigger-icon-fallback";
-  fallback.textContent = createWalletInitials(runtime.selectedWalletName);
-  iconShell.append(fallback);
-
-  if (runtime.selectedWalletIcon) {
-    const image = document.createElement("img");
-    image.className = "wallet-trigger-icon";
-    image.src = runtime.selectedWalletIcon;
-    image.alt = "";
-    image.hidden = true;
-    image.addEventListener("load", () => {
-      fallback.hidden = true;
-      image.hidden = false;
-    });
-    image.addEventListener("error", () => {
-      image.remove();
-    });
-    iconShell.prepend(image);
-  }
-
-  return iconShell;
-}
-
 function renderWalletTrigger(label) {
+  els.connectButton.textContent = label;
+
   if (!runtime.account) {
-    els.connectButton.textContent = label;
     els.connectButton.removeAttribute("aria-label");
     return;
   }
 
-  const labelText = document.createElement("span");
-  labelText.className = "wallet-trigger-label";
-  labelText.textContent = label;
-
-  const walletName = String(runtime.selectedWalletName || "").trim() || "Wallet";
-  els.connectButton.replaceChildren(createWalletTriggerIcon(), labelText);
-  els.connectButton.setAttribute("aria-label", `${walletName} ${label}`);
+  els.connectButton.setAttribute("aria-label", `Connected wallet ${label}`);
 }
 
 function syncWalletButton() {
