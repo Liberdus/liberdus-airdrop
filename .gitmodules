@@ -1,0 +1,4 @@
+[submodule "frontend/vendor/liberdus-wallet-module"]
+	path = frontend/vendor/liberdus-wallet-module
+	url = https://github.com/Liberdus/liberdus-wallet-module.git
+	branch = main

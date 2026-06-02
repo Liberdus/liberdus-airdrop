@@ -20,6 +20,7 @@ import {
   switchConfiguredNetwork,
   bindWalletEvents,
   getAvailableWallets,
+  parseWalletChainId,
 } from "../shared/wallet.js";
 import { promptForWalletSelection } from "../shared/wallet-picker.js";
 import { fetchWalletClaimRounds, isClaimsApiConfigured } from "../shared/claims.js";
@@ -47,6 +48,7 @@ const runtime = {
   selectedWalletId: null,
   selectedWalletName: null,
   selectedWalletRdns: null,
+  selectedWalletIcon: null,
   owner: null,
   currentEpoch: 0,
   config: {
@@ -977,13 +979,24 @@ function isMetaMaskWalletSelected() {
   return Boolean(provider?.isMetaMask);
 }
 
+function renderWalletTrigger(label) {
+  els.connectButton.textContent = label;
+
+  if (!runtime.account) {
+    els.connectButton.removeAttribute("aria-label");
+    return;
+  }
+
+  els.connectButton.setAttribute("aria-label", `Connected wallet ${label}`);
+}
+
 function syncWalletButton() {
   const label = runtime.account
     ? formatAddressShort(runtime.account)
     : runtime.isConnectingWallet
       ? "Connecting..."
       : "Connect Wallet";
-  els.connectButton.textContent = label;
+  renderWalletTrigger(label);
   els.connectButton.disabled = runtime.isConnectingWallet;
   els.connectButton.setAttribute("aria-busy", runtime.isConnectingWallet ? "true" : "false");
   els.walletMenuAddress.textContent = runtime.account ? formatAddressShort(runtime.account) : "-";
@@ -1476,11 +1489,12 @@ function bindEvents() {
       clearMessage();
     },
     onChainChanged: async (chainId) => {
+      const nextChainId = parseWalletChainId(chainId);
+      if (nextChainId !== null && runtime.chainId === nextChainId) return;
       runtime.claimInFlightEpoch = null;
       hideClaimCelebration({ restoreFocus: false, immediate: true });
-      resetProvider(runtime, chainId ? Number.parseInt(chainId, 16) : null);
+      resetProvider(runtime, nextChainId);
       await refreshPage();
-      clearMessage();
     },
   });
 
