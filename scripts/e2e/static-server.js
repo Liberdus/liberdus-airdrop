@@ -15,6 +15,7 @@ const MIME_TYPES = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".txt": "text/plain; charset=utf-8",
+  ".woff2": "font/woff2",
 };
 
 function send(response, statusCode, body, contentType = "text/plain; charset=utf-8") {
