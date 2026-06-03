@@ -1,7 +1,7 @@
 import { ethers } from "./ethers.js";
 import { CHAIN_NAME_BY_ID, WALLET_SESSION_KEY } from "./constants.js";
-import { createWalletCore } from "../../vendor/liberdus-wallet-module/index.js";
-import { switchOrAddEthereumChain } from "../../vendor/liberdus-wallet-module/adapters/chain.js";
+import { createWalletCore } from "../../../vendor/liberdus-wallet-module/index.js";
+import { switchOrAddEthereumChain } from "../../../vendor/liberdus-wallet-module/adapters/chain.js";
 
 const walletCore = createWalletCore({
   walletSessionKey: WALLET_SESSION_KEY,

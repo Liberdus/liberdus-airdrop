@@ -23,9 +23,16 @@ This repo contains the Solidity contract, local Hardhat tests, and static wallet
 ## Local Usage
 
 ```bash
+git submodule update --init --recursive
 npm install
 npm run compile
 npm test
+```
+
+Fresh clones can initialize the shared wallet module in one step:
+
+```bash
+git clone --recurse-submodules https://github.com/Liberdus/liberdus-airdrop.git
 ```
 
 ## BSC Deployment
