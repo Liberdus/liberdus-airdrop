@@ -36,6 +36,7 @@ import {
   isClaimsApiConfigured,
   saveAirdropRound,
   deploySavedAirdropRound,
+  updateStoredAirdropRoundDeadline,
   requestAirdropSaveChallenge,
 } from "../shared/claims.js";
 import {
@@ -124,6 +125,7 @@ const runtime = {
   hasLoadedAccountsTab: false,
   isConnectingWallet: false,
   noticeTimerId: null,
+  deadlineEditTarget: null,
 };
 
 const els = {
@@ -1086,6 +1088,51 @@ function syncDeadlineFromUtc(localInput, utcInput, unixInput) {
   applyDeadlineFields(localInput, utcInput, unixInput, unix);
 }
 
+function clearDeadlineEditTarget() {
+  runtime.deadlineEditTarget = null;
+  els.updateEpochInput.disabled = false;
+  els.updateEpochInput.placeholder = "1";
+  els.disableEpochButton.disabled = false;
+}
+
+function prepareDeadlineEdit(rowKey) {
+  const row = runtime.roundRows.find((candidate) => candidate.key === rowKey) || null;
+  if (!row || !row.canEditDeadline) {
+    throw new Error("This round does not have an editable stored deadline.");
+  }
+
+  runtime.deadlineEditTarget = {
+    rowType: row.rowType,
+    roundId: row.roundId == null ? null : Number(row.roundId),
+    epoch: Number(row.epoch || 0) || null,
+    deadline: Number(row.deadline || 0),
+  };
+
+  if (row.rowType === "draft") {
+    els.updateEpochInput.value = "";
+    els.updateEpochInput.placeholder = `Draft ${row.roundId}`;
+    els.updateEpochInput.disabled = true;
+    els.disableEpochButton.disabled = true;
+  } else {
+    els.updateEpochInput.disabled = false;
+    els.updateEpochInput.value = String(runtime.deadlineEditTarget.epoch || "");
+    els.updateEpochInput.placeholder = "1";
+    els.disableEpochButton.disabled = false;
+  }
+
+  applyDeadlineFields(
+    els.updateDeadlineInput,
+    els.updateDeadlineUtcInput,
+    els.updateDeadlineUnix,
+    row.deadline,
+  );
+  setAdminTab("contract");
+  els.updateDeadlineInput.focus();
+  logger.log(row.rowType === "draft"
+    ? "Draft deadline loaded for editing."
+    : `Epoch ${runtime.deadlineEditTarget.epoch} deadline loaded for editing.`);
+}
+
 function bindNativePicker(input) {
   if (!input) return;
 
@@ -1252,6 +1299,7 @@ function buildRoundRows() {
       key: `draft-${round.id}`,
       rowType: "draft",
       roundId: round.id,
+      epoch: null,
       label: "Draft",
       root: round.merkleRoot,
       deadline: Number(round.deadline || 0),
@@ -1261,6 +1309,7 @@ function buildRoundRows() {
       canFundTotal: true,
       canDeploy: true,
       canViewClaims: true,
+      canEditDeadline: true,
     });
   }
 
@@ -1275,6 +1324,7 @@ function buildRoundRows() {
       key: matchesStoredRound ? `round-${storedRound.id}` : `chain-${chainRow.epoch}`,
       rowType: matchesStoredRound ? "deployed" : "chain-only",
       roundId: matchesStoredRound ? storedRound.id : null,
+      epoch: Number(chainRow.epoch),
       label: `Epoch ${chainRow.epoch}`,
       root: chainRow.root,
       deadline: Number(chainRow.deadline || 0),
@@ -1284,6 +1334,7 @@ function buildRoundRows() {
       canFundTotal: matchesStoredRound,
       canDeploy: false,
       canViewClaims: Boolean(matchesStoredRound),
+      canEditDeadline: Boolean(matchesStoredRound),
     });
   }
 
@@ -1296,6 +1347,7 @@ function buildRoundRows() {
       key: `stored-${round.id}`,
       rowType: "stored-only",
       roundId: round.id,
+      epoch: Number(round.epoch || 0),
       label: formatStoredRoundLabel(round),
       root: round.merkleRoot,
       deadline: Number(round.deadline || 0),
@@ -1305,6 +1357,7 @@ function buildRoundRows() {
       canFundTotal: true,
       canDeploy: false,
       canViewClaims: true,
+      canEditDeadline: false,
     });
   }
 
@@ -1589,7 +1642,8 @@ function renderEpochList() {
             ${row.canDeploy ? `<button type="button" class="secondary table-action-button" data-round-deploy="${row.roundId}">Deploy</button>` : ""}
             ${row.canFundTotal ? `<button type="button" class="ghost table-action-button" data-round-fund="${row.roundId}">Fund Total</button>` : ""}
             ${row.canViewClaims ? `<button type="button" class="ghost table-action-button" data-round-claims="${row.roundId}">View Claims</button>` : ""}
-            ${!row.canDeploy && !row.canFundTotal && !row.canViewClaims ? '<span class="hint">No DB record</span>' : ""}
+            ${row.canEditDeadline ? `<button type="button" class="ghost table-action-button" data-round-deadline="${row.key}">Edit Deadline</button>` : ""}
+            ${!row.canDeploy && !row.canFundTotal && !row.canViewClaims && !row.canEditDeadline ? '<span class="hint">No DB record</span>' : ""}
           </td>
         </tr>
       `;
@@ -1622,6 +1676,16 @@ function renderEpochList() {
         await loadRoundClaims(Number(button.getAttribute("data-round-claims")), { scrollIntoView: true });
       } catch (error) {
         reportError(error, "Load round claims");
+      }
+    });
+  });
+
+  els.epochListBody.querySelectorAll("[data-round-deadline]").forEach((button) => {
+    button.addEventListener("click", () => {
+      try {
+        prepareDeadlineEdit(String(button.getAttribute("data-round-deadline") || ""));
+      } catch (error) {
+        reportError(error, "Edit round deadline");
       }
     });
   });
@@ -2076,6 +2140,39 @@ async function deployStoredRound(roundId) {
   }
 }
 
+async function updateDraftRoundDeadline(target, newDeadline) {
+  const storedRound = runtime.storedRounds.find((round) => round.id === Number(target.roundId)) || null;
+  if (!storedRound || storedRound.status !== "draft") {
+    throw new Error("The selected draft round could not be found.");
+  }
+
+  if (!isClaimsApiConfigured(runtime.config)) {
+    throw new Error("Backend API URL is not configured.");
+  }
+
+  const saveChallenge = await requestAirdropSaveChallenge(runtime.config, {
+    walletAddress: runtime.account,
+    merkleRoot: storedRound.merkleRoot,
+    deadline: newDeadline,
+  });
+  const saveSignature = await runtime.signer.signMessage(saveChallenge.message);
+  const persisted = await updateStoredAirdropRoundDeadline(runtime.config, {
+    roundId: storedRound.id,
+    deadline: newDeadline,
+    walletAddress: runtime.account,
+    challengeId: saveChallenge.challengeId,
+    signature: saveSignature,
+  });
+
+  await refreshPage();
+  if (persisted?.round?.id) {
+    runtime.selectedRoundId = persisted.round.id;
+    await loadRoundClaims(persisted.round.id);
+  }
+  clearDeadlineEditTarget();
+  logger.log("Draft deadline updated.", "success");
+}
+
 async function updateEpochDeadline(newDeadline) {
   const { airdrop } = getContracts({
     config: runtime.config,
@@ -2086,17 +2183,45 @@ async function updateEpochDeadline(newDeadline) {
   if (!airdrop) throw new Error("Airdrop address is not configured.");
 
   const epoch = readRequiredEpoch(els.updateEpochInput, "Epoch");
+  const epochNumber = Number(epoch);
+  const storedRound = runtime.storedRoundsByEpoch.get(epochNumber) || null;
+  const chainRow = runtime.epochRows.find((row) => Number(row.epoch) === epochNumber) || null;
+  const shouldSyncStoredRound = doesStoredRoundMatchChainRow(storedRound, chainRow);
+  let submittedTxHash = "";
   await sendTransaction(
     newDeadline === 0 ? "Disable epoch" : "Update deadline",
     () => airdrop.setEpochDeadline(epoch, newDeadline),
     {
       log: logger.log,
+      afterSubmit: async (tx) => {
+        submittedTxHash = tx.hash;
+      },
       afterSuccess: async () => {
+        if (shouldSyncStoredRound && isClaimsApiConfigured(runtime.config) && submittedTxHash) {
+          await updateStoredAirdropRoundDeadline(runtime.config, {
+            epoch: epochNumber,
+            deadline: newDeadline,
+            txHash: submittedTxHash,
+          });
+        }
         await refreshPage();
       },
       formatError: (error, label) => formatUiError(error, label, runtime),
     },
   );
+  clearDeadlineEditTarget();
+}
+
+async function updateSelectedRoundDeadline(newDeadline) {
+  const target = runtime.deadlineEditTarget;
+  if (target?.rowType === "draft") {
+    await validateFutureDeadlineAgainstChain(newDeadline);
+    await updateDraftRoundDeadline(target, newDeadline);
+    return;
+  }
+
+  await validateFutureDeadlineAgainstChain(newDeadline, { allowZero: true });
+  await updateEpochDeadline(newDeadline);
 }
 
 function bindEvents() {
@@ -2329,6 +2454,11 @@ function bindEvents() {
   els.updateDeadlineUtcInput.addEventListener("input", () => {
     syncDeadlineFromUtc(els.updateDeadlineInput, els.updateDeadlineUtcInput, els.updateDeadlineUnix);
   });
+  els.updateEpochInput.addEventListener("input", () => {
+    if (!els.updateEpochInput.disabled) {
+      clearDeadlineEditTarget();
+    }
+  });
 
   bindNativePicker(els.startDeadlineInput);
   bindNativePicker(els.startDeadlineUtcInput);
@@ -2358,8 +2488,7 @@ function bindEvents() {
     event.preventDefault();
     try {
       const deadlineUnix = Number(els.updateDeadlineUnix.value);
-      await validateFutureDeadlineAgainstChain(deadlineUnix);
-      await updateEpochDeadline(deadlineUnix);
+      await updateSelectedRoundDeadline(deadlineUnix);
     } catch (error) {
       reportError(error, "Update deadline");
     }
@@ -2367,7 +2496,7 @@ function bindEvents() {
 
   els.disableEpochButton.addEventListener("click", async () => {
     try {
-      await updateEpochDeadline(0);
+      await updateSelectedRoundDeadline(0);
     } catch (error) {
       reportError(error, "Disable epoch");
     }

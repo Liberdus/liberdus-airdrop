@@ -1,5 +1,7 @@
 const { defineConfig } = require("@playwright/test");
 
+const frontendPort = Number.parseInt(process.env.E2E_FRONTEND_PORT || "4173", 10);
+
 module.exports = defineConfig({
   testDir: "./e2e/tests",
   timeout: 90_000,
@@ -10,7 +12,7 @@ module.exports = defineConfig({
   },
   reporter: "list",
   use: {
-    baseURL: "http://127.0.0.1:4173/frontend/",
+    baseURL: `http://127.0.0.1:${frontendPort}/frontend/`,
     headless: true,
     screenshot: "only-on-failure",
     trace: "on-first-retry",
@@ -26,8 +28,8 @@ module.exports = defineConfig({
       timeout: 120_000,
     },
     {
-      command: "node scripts/e2e/static-server.js",
-      port: 4173,
+      command: `PORT=${frontendPort} node scripts/e2e/static-server.js`,
+      port: frontendPort,
       reuseExistingServer: false,
       stdout: "pipe",
       stderr: "pipe",

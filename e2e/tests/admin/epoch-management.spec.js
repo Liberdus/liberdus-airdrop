@@ -1,6 +1,7 @@
 const { expect, test } = require("../../fixtures/testWithMockWallet");
 const {
   connectViaWalletPicker,
+  fetchStoredRounds,
   getLocalDateTimeInputValue,
   getUtcDateTimeInputValue,
   startAirdropFromUpload,
@@ -11,6 +12,9 @@ test("admin can update an epoch deadline and the update inputs stay synchronized
   await connectViaWalletPicker(page);
   await startAirdropFromUpload(page, e2eClaimsFile);
   await page.getByRole("button", { name: "Contract", exact: true }).click();
+  const beforeRounds = await fetchStoredRounds(page);
+  const beforeRound = beforeRounds.rounds.find((round) => round.epoch === 1);
+  expect(beforeRound).toBeTruthy();
 
   const nextDeadlineUnix = await page.evaluate(() => {
     const nextDeadline = Math.floor(Date.now() / 1000) + (4 * 60 * 60);
@@ -27,6 +31,11 @@ test("admin can update an epoch deadline and the update inputs stay synchronized
   await page.getByRole("button", { name: "Update Deadline" }).click();
   await expect(page.getByText("Update deadline complete.")).toBeVisible();
   await expect(page.locator("#epochListBody")).toContainText("Active");
+
+  const afterRounds = await fetchStoredRounds(page);
+  const afterRound = afterRounds.rounds.find((round) => round.epoch === 1);
+  expect(afterRound.deadline).toBe(Number(nextDeadlineUnix));
+  expect(Date.parse(afterRound.updatedAt)).toBeGreaterThan(Date.parse(beforeRound.updatedAt));
 
   await page.getByRole("button", { name: "Lookups", exact: true }).click();
   await page.locator("#queryEpochInput").fill("1");

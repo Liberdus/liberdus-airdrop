@@ -2,6 +2,7 @@ const { ethers } = require("ethers");
 
 const AIRDROP_ABI = [
   "event AirdropStarted(uint256 indexed epoch, bytes32 indexed merkleRoot, uint256 deadline)",
+  "event DeadlineUpdated(uint256 indexed epoch, uint256 previousDeadline, uint256 newDeadline)",
   "function epochInfo(uint256) view returns (bytes32,uint256,uint256)",
   "function owner() view returns (address)",
 ];
@@ -86,6 +87,70 @@ async function verifyAirdropStartTransaction(appConfig, txHash, expectedMerkleRo
   };
 }
 
+async function verifyDeadlineUpdateTransaction(appConfig, txHash, expectedEpoch, expectedDeadline) {
+  const provider = createAirdropProvider(appConfig);
+  const contract = createAirdropContract(appConfig, provider);
+  const normalizedTxHash = String(txHash || "").trim();
+
+  if (!ethers.isHexString(normalizedTxHash, 32)) {
+    throw new Error("Transaction hash must be a 32-byte hex string.");
+  }
+
+  const receipt = await provider.getTransactionReceipt(normalizedTxHash);
+  if (!receipt) {
+    throw new Error("Transaction receipt was not found yet.");
+  }
+
+  if (Number(receipt.status || 0) !== 1) {
+    throw new Error("Transaction did not succeed on chain.");
+  }
+
+  const normalizedContractAddress = appConfig.airdropAddress.toLowerCase();
+  const matchingLogs = receipt.logs
+    .filter((log) => String(log.address || "").toLowerCase() === normalizedContractAddress)
+    .map((log) => {
+      try {
+        return contract.interface.parseLog(log);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .filter((parsed) => parsed.name === "DeadlineUpdated");
+
+  if (matchingLogs.length !== 1) {
+    throw new Error("Expected exactly one DeadlineUpdated event in the transaction receipt.");
+  }
+
+  const [event] = matchingLogs;
+  const epoch = Number(event.args.epoch);
+  const previousDeadline = Number(event.args.previousDeadline || 0);
+  const newDeadline = Number(event.args.newDeadline || 0);
+
+  if (Number(expectedEpoch) !== epoch) {
+    throw new Error("Epoch from the transaction did not match the request.");
+  }
+
+  if (Number(expectedDeadline) !== newDeadline) {
+    throw new Error("Deadline from the transaction did not match the request.");
+  }
+
+  const onchain = await fetchEpochMetadata(appConfig, epoch);
+  if (onchain.deadline !== newDeadline) {
+    throw new Error("On-chain epoch deadline did not match the transaction event.");
+  }
+
+  return {
+    epoch,
+    previousDeadline,
+    deadline: newDeadline,
+    merkleRoot: onchain.merkleRoot,
+    txHash: normalizedTxHash.toLowerCase(),
+    blockNumber: Number(receipt.blockNumber || 0),
+    blockHash: String(receipt.blockHash || "").trim().toLowerCase(),
+  };
+}
+
 async function fetchAirdropOwner(appConfig) {
   const provider = createAirdropProvider(appConfig);
   const contract = createAirdropContract(appConfig, provider);
@@ -98,4 +163,5 @@ module.exports = {
   fetchAirdropOwner,
   fetchEpochMetadata,
   verifyAirdropStartTransaction,
+  verifyDeadlineUpdateTransaction,
 };

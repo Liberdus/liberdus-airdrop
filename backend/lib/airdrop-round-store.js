@@ -178,6 +178,22 @@ function createAirdropRoundStore(db) {
           updated_at = @updatedAt
       WHERE id = @id
     `),
+    updateDraftDeadline: db.prepare(`
+      UPDATE airdrop_rounds
+      SET deadline = @deadline,
+          updated_at = @updatedAt
+      WHERE id = @id
+        AND deployment_key = @deploymentKey
+        AND status = 'draft'
+    `),
+    updateDeployedDeadlineByEpoch: db.prepare(`
+      UPDATE airdrop_rounds
+      SET deadline = @deadline,
+          updated_at = @updatedAt
+      WHERE deployment_key = @deploymentKey
+        AND status = 'deployed'
+        AND epoch = @epoch
+    `),
     deleteClaimsByRoundId: db.prepare(`
       DELETE FROM airdrop_claims
       WHERE round_id = ?
@@ -392,6 +408,58 @@ function createAirdropRoundStore(db) {
     return normalizeRoundRecord(statements.getRoundByIdAndDeployment.get(existing.id, existing.deploymentKey));
   });
 
+  const updateDraftRoundDeadline = db.transaction((roundId, deploymentKey, deadline, updatedAt = null) => {
+    const normalizedDeploymentKey = normalizeDeploymentKey(deploymentKey);
+    const normalizedRoundId = Number(roundId);
+    const existing = normalizeRoundRecord(
+      statements.getRoundByIdAndDeployment.get(normalizedRoundId, normalizedDeploymentKey),
+    );
+
+    if (!existing) {
+      throw new Error("Stored airdrop round was not found.");
+    }
+
+    if (existing.status !== "draft") {
+      throw new Error("Only draft rounds can be edited before deployment.");
+    }
+
+    const timestamp = normalizeIsoDate(updatedAt, new Date().toISOString());
+    statements.updateDraftDeadline.run({
+      id: existing.id,
+      deploymentKey: existing.deploymentKey,
+      deadline: Number(deadline),
+      updatedAt: timestamp,
+    });
+
+    return normalizeRoundRecord(statements.getRoundByIdAndDeployment.get(existing.id, existing.deploymentKey));
+  });
+
+  const updateDeployedRoundDeadlineByEpoch = db.transaction((deploymentKey, epoch, deadline, updatedAt = null) => {
+    const normalizedDeploymentKey = normalizeDeploymentKey(deploymentKey);
+    const normalizedEpoch = Number(epoch);
+    const existing = normalizeRoundRecord(
+      statements.getRoundByDeploymentAndEpoch.get(normalizedDeploymentKey, normalizedEpoch),
+    );
+
+    if (!existing) {
+      throw new Error("Stored deployed round was not found for this epoch.");
+    }
+
+    if (existing.status !== "deployed") {
+      throw new Error("Only deployed rounds can be synced by epoch.");
+    }
+
+    const timestamp = normalizeIsoDate(updatedAt, new Date().toISOString());
+    statements.updateDeployedDeadlineByEpoch.run({
+      deploymentKey: normalizedDeploymentKey,
+      epoch: normalizedEpoch,
+      deadline: Number(deadline),
+      updatedAt: timestamp,
+    });
+
+    return normalizeRoundRecord(statements.getRoundByDeploymentAndEpoch.get(normalizedDeploymentKey, normalizedEpoch));
+  });
+
   return {
     saveDraftRound(round) {
       return saveDraftRound(round);
@@ -399,6 +467,14 @@ function createAirdropRoundStore(db) {
 
     finalizeRoundDeployment(roundId, deploymentKey, deployment) {
       return finalizeRoundDeployment(roundId, deploymentKey, deployment);
+    },
+
+    updateDraftRoundDeadline(roundId, deploymentKey, deadline, updatedAt = null) {
+      return updateDraftRoundDeadline(roundId, deploymentKey, deadline, updatedAt);
+    },
+
+    updateDeployedRoundDeadlineByEpoch(deploymentKey, epoch, deadline, updatedAt = null) {
+      return updateDeployedRoundDeadlineByEpoch(deploymentKey, epoch, deadline, updatedAt);
     },
 
     listRounds(deploymentKey) {
@@ -409,6 +485,12 @@ function createAirdropRoundStore(db) {
     getRoundById(roundId, deploymentKey) {
       return normalizeRoundRecord(
         statements.getRoundByIdAndDeployment.get(Number(roundId), normalizeDeploymentKey(deploymentKey)),
+      );
+    },
+
+    getRoundByEpoch(epoch, deploymentKey) {
+      return normalizeRoundRecord(
+        statements.getRoundByDeploymentAndEpoch.get(normalizeDeploymentKey(deploymentKey), Number(epoch)),
       );
     },
 

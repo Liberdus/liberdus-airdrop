@@ -146,6 +146,22 @@ export async function deploySavedAirdropRound(config, roundId, payload) {
   });
 }
 
+export async function updateStoredAirdropRoundDeadline(config, payload) {
+  const backendBaseUrl = getBackendBaseUrl(config);
+  if (!backendBaseUrl) {
+    throw new Error("Claim backend URL is not configured.");
+  }
+
+  return fetchBackendJson(`${backendBaseUrl}/api/admin/airdrop-rounds/deadline`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function requestAirdropSaveChallenge(config, payload) {
   const backendBaseUrl = getBackendBaseUrl(config);
   if (!backendBaseUrl) {

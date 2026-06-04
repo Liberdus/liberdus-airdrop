@@ -8,7 +8,8 @@ const RPC_URL = "http://127.0.0.1:8545";
 const E2E_BACKEND_HOST = "127.0.0.1";
 const E2E_BACKEND_PORT = 8790;
 const E2E_BACKEND_ORIGIN = `http://${E2E_BACKEND_HOST}:${E2E_BACKEND_PORT}`;
-const E2E_FRONTEND_ORIGIN = "http://127.0.0.1:4173";
+const E2E_FRONTEND_PORT = Number.parseInt(process.env.E2E_FRONTEND_PORT || "4173", 10);
+const E2E_FRONTEND_ORIGIN = `http://127.0.0.1:${E2E_FRONTEND_PORT}`;
 const E2E_FRONTEND_RETURN_URL = `${E2E_FRONTEND_ORIGIN}/frontend/`;
 const E2E_DB_PATH = path.join(REPO_ROOT, "data", "e2e.sqlite");
 
