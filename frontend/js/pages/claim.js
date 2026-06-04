@@ -666,6 +666,18 @@ function syncXSessionFromStorage() {
   return Boolean(session);
 }
 
+function hasXAuthCallbackSignal() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("x_auth") === "complete" || params.has("x_error");
+}
+
+function resetAbandonedXAuthFlow() {
+  if (!runtime.isConnectingX || hasXAuthCallbackSignal()) return;
+  runtime.isConnectingX = false;
+  syncXSessionFromStorage();
+  syncXAuthCard();
+}
+
 function syncXAuthCard() {
   if (!els.xAuthCard) return;
 
@@ -1499,6 +1511,13 @@ function bindEvents() {
   });
 
   window.addEventListener("resize", updateToastOffset);
+  window.addEventListener("focus", resetAbandonedXAuthFlow);
+  window.addEventListener("pageshow", resetAbandonedXAuthFlow);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      resetAbandonedXAuthFlow();
+    }
+  });
   document.addEventListener("click", (event) => {
     if (!runtime.account || !els.walletMenu || els.walletMenu.hasAttribute("hidden")) return;
     const target = event.target;

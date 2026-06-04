@@ -221,7 +221,10 @@ export async function startXLogin(config = {}) {
 
   const startUrl = new URL(`${xAuth.backendUrl}/api/x/start`);
   startUrl.searchParams.set("return_uri", xAuth.redirectUri);
-  window.location.assign(startUrl.toString());
+  const authWindow = window.open(startUrl.toString(), "_blank", "noopener,noreferrer");
+  if (!authWindow) {
+    throw new Error("Allow pop-ups for this site to sign in with X.");
+  }
 }
 
 export async function logoutXSession(config = {}, session = getXSession()) {
