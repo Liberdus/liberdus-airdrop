@@ -9,7 +9,7 @@ const { openDatabase, getDatabasePath } = require("./lib/db");
 const { loadAppConfig, requireChainConfig } = require("./lib/app-config");
 const { buildClaimRound } = require("./lib/claim-round");
 const { createAirdropRoundStore } = require("./lib/airdrop-round-store");
-const { fetchAirdropOwner, verifyAirdropStartTransaction } = require("./lib/airdrop-chain");
+const { fetchAirdropOwner, verifyAirdropStartTransaction, verifyDeadlineUpdateTransaction } = require("./lib/airdrop-chain");
 const { createAccountStore } = require("./lib/x-account-store");
 const { createRecoverySubmissionStore } = require("./lib/recovery-submission-store");
 
@@ -64,6 +64,7 @@ const RATE_LIMITS = {
   adminDraftChallenge: { limit: 20, windowMs: 10 * 60 * 1000 },
   saveRound: { limit: 20, windowMs: 10 * 60 * 1000 },
   deployRound: { limit: 20, windowMs: 10 * 60 * 1000 },
+  updateRoundDeadline: { limit: 30, windowMs: 10 * 60 * 1000 },
   health: { limit: 30, windowMs: 60 * 1000 },
 };
 
@@ -1857,6 +1858,119 @@ async function handleDeployStoredAirdropRound(request, response, roundId) {
   });
 }
 
+async function verifyAdminRoundSaveSignature(body, { expectedMerkleRoot, expectedDeadline }) {
+  const challenge = getRequiredAdminRoundSaveChallenge(body);
+  const signedWalletAddress = requireWalletAddress(body.walletAddress);
+  const signature = String(body.signature || "").trim();
+  if (!signature) {
+    throw new HttpError(400, "Admin round save request must include a wallet signature.");
+  }
+
+  if (challenge.walletAddress !== signedWalletAddress) {
+    throw new HttpError(403, "Admin round save challenge does not match the signing wallet.");
+  }
+
+  if (challenge.merkleRoot !== String(expectedMerkleRoot || "").trim().toLowerCase()) {
+    throw new HttpError(400, "Admin round save challenge does not match the Merkle root.");
+  }
+
+  if (challenge.deadline !== Number(expectedDeadline)) {
+    throw new HttpError(400, "Admin round save challenge does not match the deadline.");
+  }
+
+  if (challenge.deploymentKey !== getRequiredDeploymentKey()) {
+    throw new HttpError(400, "Admin round save challenge does not match the active deployment.");
+  }
+
+  let recoveredAddress;
+  try {
+    recoveredAddress = ethers.verifyMessage(challenge.message, signature);
+  } catch {
+    throw new HttpError(400, "Admin round save signature is invalid.");
+  }
+
+  if (ethers.getAddress(recoveredAddress) !== signedWalletAddress) {
+    throw new HttpError(403, "Admin round save signature did not match the supplied wallet.");
+  }
+
+  const chainConfig = requireChainConfig(appConfig);
+  const currentOwner = await fetchAirdropOwner(chainConfig);
+  if (ethers.getAddress(currentOwner) !== signedWalletAddress) {
+    throw new HttpError(403, "Only the current contract owner can save airdrop drafts.");
+  }
+
+  adminRoundSaveChallenges.delete(challenge.challengeId);
+  return signedWalletAddress;
+}
+
+async function handleUpdateAirdropRoundDeadline(request, response) {
+  const body = await readJsonRequest(request);
+  const deploymentKey = getRequiredDeploymentKey();
+  const deadline = Number.parseInt(String(body.deadline ?? "").trim(), 10);
+
+  if (!Number.isInteger(deadline) || deadline < 0) {
+    throw new HttpError(400, "Round deadline must be zero or a positive integer.");
+  }
+
+  const roundId = Number.parseInt(String(body.roundId || "").trim(), 10);
+  if (Number.isInteger(roundId) && roundId > 0) {
+    if (deadline <= 0) {
+      throw new HttpError(400, "Draft round deadline must be a positive integer.");
+    }
+
+    const storedRound = airdropRoundStore.getRoundById(roundId, deploymentKey);
+    if (!storedRound) {
+      throw new HttpError(404, "Stored airdrop round was not found.");
+    }
+
+    if (storedRound.status !== "draft") {
+      throw new HttpError(400, "Only draft rounds can be edited with roundId.");
+    }
+
+    await verifyAdminRoundSaveSignature(body, {
+      expectedMerkleRoot: storedRound.merkleRoot,
+      expectedDeadline: deadline,
+    });
+
+    const updatedRound = airdropRoundStore.updateDraftRoundDeadline(
+      storedRound.id,
+      deploymentKey,
+      deadline,
+      new Date().toISOString(),
+    );
+
+    writeJson(response, 200, {
+      round: serializeAirdropRoundSummary(updatedRound),
+    });
+    return;
+  }
+
+  const epoch = Number.parseInt(String(body.epoch || "").trim(), 10);
+  if (!Number.isInteger(epoch) || epoch <= 0) {
+    throw new HttpError(400, "Epoch must be a positive integer.");
+  }
+
+  const txHash = requireBytes32Hex(body.txHash || body.transactionHash, "Transaction hash");
+  const chainConfig = requireChainConfig(appConfig);
+  const verifiedUpdate = await verifyDeadlineUpdateTransaction(chainConfig, txHash, epoch, deadline);
+  const storedRound = airdropRoundStore.getRoundByEpoch(verifiedUpdate.epoch, deploymentKey);
+  if (!storedRound || storedRound.status !== "deployed") {
+    throw new HttpError(404, "Stored deployed round was not found for this epoch.");
+  }
+
+  const updatedRound = airdropRoundStore.updateDeployedRoundDeadlineByEpoch(
+    deploymentKey,
+    verifiedUpdate.epoch,
+    verifiedUpdate.deadline,
+    new Date().toISOString(),
+  );
+
+  writeJson(response, 200, {
+    round: serializeAirdropRoundSummary(updatedRound),
+    deadlineUpdate: verifiedUpdate,
+  });
+}
+
 async function handleLinkChallenge(request, response) {
   const session = getRequiredSessionFromCookie(request, response);
   requireCsrf(request, session);
@@ -2187,6 +2301,13 @@ const server = http.createServer(async (request, response) => {
       requireAllowedOrigin(request, response);
       consumeRateLimit(request, "saveRound");
       await handleSaveAirdropRound(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && pathname === "/api/admin/airdrop-rounds/deadline") {
+      requireAllowedOrigin(request, response);
+      consumeRateLimit(request, "updateRoundDeadline");
+      await handleUpdateAirdropRoundDeadline(request, response);
       return;
     }
 

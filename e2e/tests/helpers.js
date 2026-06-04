@@ -86,9 +86,50 @@ async function startAirdropFromUpload(page, claimsFile, { deadlineSelector = "#s
   await page.getByRole("button", { name: "Prepare" }).click();
 }
 
+async function fetchStoredRounds(page) {
+  return page.evaluate(async (storageKey) => {
+    const configResponse = await fetch("config.local.json", { cache: "no-store" });
+    if (!configResponse.ok) {
+      throw new Error("Unable to load local frontend config.");
+    }
+
+    const config = await configResponse.json();
+    let overrides = {};
+    try {
+      overrides = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+    } catch {
+      overrides = {};
+    }
+
+    const overrideXAuth = overrides.xAuth && typeof overrides.xAuth === "object" ? overrides.xAuth : {};
+    const configXAuth = config.xAuth && typeof config.xAuth === "object" ? config.xAuth : {};
+    const apiBaseUrl = String(
+      overrides.apiBaseUrl
+      || overrideXAuth.backendUrl
+      || config.apiBaseUrl
+      || configXAuth.backendUrl
+      || "",
+    ).replace(/\/+$/u, "");
+    if (!apiBaseUrl) {
+      throw new Error("Local frontend config does not include an API base URL.");
+    }
+
+    const response = await fetch(`${apiBaseUrl}/api/airdrop/rounds`, {
+      cache: "no-store",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      throw new Error(`Stored rounds request failed with ${response.status}.`);
+    }
+
+    return response.json();
+  }, UI_CONFIG_STORAGE_KEY);
+}
+
 module.exports = {
   connectViaWalletPicker,
   enableXRecovery,
+  fetchStoredRounds,
   getLocalDateTimeInputValue,
   getUtcDateTimeInputValue,
   mockXAuthSession,

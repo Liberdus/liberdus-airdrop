@@ -2,7 +2,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { expect, test } = require("../../fixtures/testWithMockWallet");
-const { connectViaWalletPicker, setFutureDeadline } = require("../helpers");
+const {
+  connectViaWalletPicker,
+  fetchStoredRounds,
+  getUtcDateTimeInputValue,
+  setFutureDeadline,
+} = require("../helpers");
 
 function writeFixtureFile(testInfo, name, content) {
   const filePath = testInfo.outputPath(name);
@@ -86,4 +91,46 @@ test("admin can build a round from every linked wallet with one shared amount", 
   await expect(page.getByText("Fund airdrop complete.")).toBeVisible();
   await page.getByRole("button", { name: "Deploy" }).first().click();
   await expect(page.locator("#currentEpoch")).toHaveText("1");
+});
+
+test("admin can edit a saved draft deadline before deploying it", async ({ page, e2eClaimsFile }) => {
+  await page.goto("admin.html");
+  await connectViaWalletPicker(page);
+
+  await page.locator("#uploadClaimsFileInput").setInputFiles(e2eClaimsFile);
+  await setFutureDeadline(page, "#startDeadlineInput", 90);
+  await page.getByRole("button", { name: "Save Round to DB" }).click();
+  await expect(page.locator("#selectedRoundLabel")).toContainText("Draft");
+
+  const beforeRounds = await fetchStoredRounds(page);
+  const draftBefore = beforeRounds.rounds.find((round) => round.status === "draft");
+  expect(draftBefore).toBeTruthy();
+
+  await page.locator("#epochListBody tr", { hasText: "Draft" }).getByRole("button", { name: "Edit Deadline" }).click();
+
+  const nextDeadlineUnix = await page.evaluate(() => {
+    const nextDeadline = Math.floor(Date.now() / 1000) + (3 * 60 * 60);
+    return String(Math.floor(nextDeadline / 60) * 60);
+  });
+  const nextDeadlineUtc = await getUtcDateTimeInputValue(page, nextDeadlineUnix);
+  await page.locator("#updateDeadlineUtcInput").fill(nextDeadlineUtc);
+  await page.getByRole("button", { name: "Update Deadline" }).click();
+  await expect(page.getByText("Draft deadline updated.")).toBeVisible();
+
+  const afterRounds = await fetchStoredRounds(page);
+  const draftAfter = afterRounds.rounds.find((round) => round.id === draftBefore.id);
+  expect(draftAfter.deadline).toBe(Number(nextDeadlineUnix));
+  expect(Date.parse(draftAfter.updatedAt)).toBeGreaterThan(Date.parse(draftBefore.updatedAt));
+
+  await page.getByRole("button", { name: "Rounds", exact: true }).click();
+  await expect(page.locator("#epochListBody")).toContainText("Draft");
+  await page.getByRole("button", { name: "Fund Total" }).first().click();
+  await expect(page.getByText("Fund airdrop complete.")).toBeVisible();
+  await page.getByRole("button", { name: "Deploy" }).first().click();
+  await expect(page.getByText("Draft deployed as epoch 1.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Lookups", exact: true }).click();
+  await page.locator("#queryEpochInput").fill("1");
+  await page.getByRole("button", { name: "Fetch Epoch Data" }).click();
+  await expect(page.locator("#epochQueryResult")).toContainText(`"deadline": "${nextDeadlineUnix}"`);
 });
