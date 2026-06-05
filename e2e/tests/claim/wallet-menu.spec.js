@@ -26,6 +26,24 @@ test("claimant wallet menu shows the connected address, chain id, and disconnect
   await expect(page.getByText("Available claims will appear here after you connect.")).toBeVisible();
 });
 
+test("claimant wallet with no claims sees X recovery instead of the generic empty state", async ({ page, hardhatChain }) => {
+  await enableXRecovery(page, hardhatChain.backendUrl);
+
+  await page.goto("index.html");
+  await connectViaWalletPicker(page);
+
+  await expect(page.getByRole("button", { name: /0xf39f\.\.\.2266/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign In With X" })).toBeVisible();
+  await expect(page.getByText("No claim was found for this wallet. Sign in with X to start follower recovery.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Available Claims" })).toHaveCount(0);
+  await expect(page.getByText("Nothing available right now.")).toHaveCount(0);
+  await expect(page.getByText("If anything is available for this wallet, it will appear here.")).toHaveCount(0);
+
+  await openWalletMenu(page, /0xf39f\.\.\.2266/i);
+  await expect(page.locator("#walletMenu")).toBeVisible();
+  await expect(page.locator("#walletMenuChainId")).toHaveText("1337");
+});
+
 test("wallet picker merges a provider-array wallet with the same EIP-6963 wallet announcement", async ({ page }) => {
   await page.addInitScript(() => {
     const icon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1'%3E%3Crect width='1' height='1' fill='%23f6851b'/%3E%3C/svg%3E";
