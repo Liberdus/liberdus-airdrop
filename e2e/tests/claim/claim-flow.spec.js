@@ -7,7 +7,7 @@ test("@smoke claimant can claim from the wrong network after wallet switch", asy
   await startAirdropFromUpload(page, e2eClaimsFile);
 
   await mockWallet.setAccount(page, mockWallet.accounts.claimant);
-  await mockWallet.setChainId(page, toHexChainId(1337));
+  await mockWallet.setChainId(page, toHexChainId(31337));
 
   await page.goto("index.html");
   await expect(page.getByRole("button", { name: /0x7099\.\.\.79c8/i })).toBeVisible();
