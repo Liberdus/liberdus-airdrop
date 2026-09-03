@@ -140,6 +140,7 @@ function buildSession(result, profile, previousSession = null) {
     : null;
   const hasAccountField = Object.prototype.hasOwnProperty.call(result || {}, "account");
   const hasExistingSubmissionField = Object.prototype.hasOwnProperty.call(result || {}, "existingSubmission");
+  const hasCampaignCandidateField = Object.prototype.hasOwnProperty.call(result || {}, "campaignCandidate");
   return {
     expiresAt: result?.expiresAt || null,
     csrfToken: String(result?.csrfToken || ""),
@@ -149,6 +150,9 @@ function buildSession(result, profile, previousSession = null) {
     existingSubmission: hasExistingSubmissionField
       ? normalizeExistingSubmission(result.existingSubmission)
       : previousExistingSubmission,
+    campaignCandidate: hasCampaignCandidateField
+      ? result.campaignCandidate
+      : (previousSession?.campaignCandidate || null),
     linkResult: previousLinkResult,
   };
 }

@@ -642,12 +642,20 @@ function formatExistingFormWalletStatus(account = getSignedInXAccount()) {
     runtime.account
     && normalizeAddress(walletAddress) === normalizeAddress(runtime.account),
   );
+  const campaign = runtime.xSession?.campaignCandidate;
+  const verificationNote = campaign
+    ? campaign.followerStatus === "confirmed"
+      ? " X identity and follower status are verified."
+      : campaign.followerStatus === "not_following"
+        ? " X identity is verified, but this account was not following @Liberdus when checked."
+        : " X identity is verified; the live follower check is still pending."
+    : "";
 
   if (isConnectedWalletMatch) {
-    return `We already have this X account linked to ${walletAddress}. Use this wallet to claim when eligible rounds are available.`;
+    return `We already have this X account linked to ${walletAddress}.${verificationNote} Use this wallet to claim when eligible rounds are available.`;
   }
 
-  return `We already have this X account linked to ${walletAddress}. Switch to that wallet to claim.`;
+  return `We already have this X account linked to ${walletAddress}.${verificationNote} Switch to that wallet to claim.`;
 }
 
 function formatExistingRecoveryStatus() {

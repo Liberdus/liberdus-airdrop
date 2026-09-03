@@ -4,7 +4,7 @@ const path = require("node:path");
 const Database = require("better-sqlite3");
 
 const DEFAULT_DB_PATH = path.join("data", "liberdus.sqlite");
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 function getRepoRoot() {
   return path.resolve(__dirname, "..", "..");
 }
@@ -80,6 +80,7 @@ function initializeSchema(db) {
   `);
 
   createAirdropSchema(db);
+  createCampaignSchema(db);
 }
 
 function createAirdropSchema(db) {
@@ -145,8 +146,38 @@ function createAirdropSchema(db) {
   `);
 }
 
+function createCampaignSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS social_reward_candidates (
+      id INTEGER PRIMARY KEY,
+      account_id INTEGER NOT NULL UNIQUE REFERENCES x_accounts(id) ON DELETE CASCADE,
+      submitted_x_username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      submitted_wallet_address TEXT NOT NULL,
+      submitted_email TEXT,
+      submission_json TEXT NOT NULL DEFAULT '{}',
+      compliance_status TEXT NOT NULL DEFAULT 'prevalidated',
+      x_verification_status TEXT NOT NULL DEFAULT 'pending',
+      follower_status TEXT NOT NULL DEFAULT 'pending',
+      authenticated_x_user_id TEXT,
+      authenticated_x_username TEXT,
+      x_verified_at TEXT,
+      follower_checked_at TEXT,
+      imported_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_social_reward_candidates_wallet
+      ON social_reward_candidates(LOWER(submitted_wallet_address));
+
+    CREATE INDEX IF NOT EXISTS idx_social_reward_candidates_x_user_id
+      ON social_reward_candidates(authenticated_x_user_id);
+  `);
+}
+
 function dropKnownTablesAndIndexes(db) {
   db.exec(`
+    DROP INDEX IF EXISTS idx_social_reward_candidates_wallet;
+    DROP INDEX IF EXISTS idx_social_reward_candidates_x_user_id;
     DROP INDEX IF EXISTS idx_x_accounts_username_norm;
     DROP INDEX IF EXISTS idx_x_accounts_username_lookup;
     DROP INDEX IF EXISTS idx_x_accounts_is_follower;
@@ -168,6 +199,7 @@ function dropKnownTablesAndIndexes(db) {
     DROP TABLE IF EXISTS airdrop_rounds;
     DROP TABLE IF EXISTS airdrop_claims_legacy;
     DROP TABLE IF EXISTS airdrop_rounds_legacy;
+    DROP TABLE IF EXISTS social_reward_candidates;
     DROP TABLE IF EXISTS recovery_submissions;
     DROP TABLE IF EXISTS x_recovery_candidates;
     DROP TABLE IF EXISTS x_recovery_candidate_imports;
@@ -331,6 +363,7 @@ function migrateAirdropSchemaV2(db) {
 
 function migrateSchema(db) {
   if (hasCurrentSchema(db)) {
+    createCampaignSchema(db);
     setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
     return;
   }
@@ -351,11 +384,13 @@ function migrateSchema(db) {
 
   if (!hasAirdropTables) {
     createAirdropSchema(db);
+    createCampaignSchema(db);
     setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
     return;
   }
 
   migrateAirdropSchemaV2(db);
+  createCampaignSchema(db);
   setSchemaVersion(db, CURRENT_SCHEMA_VERSION);
 }
 

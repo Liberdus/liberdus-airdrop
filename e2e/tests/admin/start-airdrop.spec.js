@@ -93,6 +93,20 @@ test("admin can build a round from every linked wallet with one shared amount", 
   await expect(page.locator("#currentEpoch")).toHaveText("1");
 });
 
+test("admin accepts a claims CSV as well as JSON", async ({ page, mockWallet }, testInfo) => {
+  const claimsCsvPath = writeFixtureFile(testInfo, "claims.csv", [
+    "account,amount",
+    `${mockWallet.accounts.claimant},12.5`,
+    `${mockWallet.accounts.secondary},7.5`,
+  ].join("\n"));
+
+  await page.goto("admin.html");
+  await connectViaWalletPicker(page);
+  await page.locator("#uploadClaimsFileInput").setInputFiles(claimsCsvPath);
+  await expect(page.locator("#uploadedClaimCount")).toHaveText("2 wallets");
+  await expect(page.locator("#uploadedClaimTotal")).toContainText("20 LIB");
+});
+
 test("admin can edit a saved draft deadline before deploying it", async ({ page, e2eClaimsFile }) => {
   await page.goto("admin.html");
   await connectViaWalletPicker(page);

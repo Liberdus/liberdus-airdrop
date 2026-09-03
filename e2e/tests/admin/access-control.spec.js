@@ -1,14 +1,17 @@
 const { expect, test, toHexChainId } = require("../../fixtures/testWithMockWallet");
 const { connectViaWalletPicker } = require("../helpers");
 
-test("non-owner wallet stays gated from admin controls", async ({ page, mockWallet }) => {
+test("non-owner wallet can view public admin status while controls stay locked", async ({ page, mockWallet }) => {
   await page.goto("admin.html");
   await mockWallet.setAccount(page, mockWallet.accounts.outsider);
   await connectViaWalletPicker(page);
 
-  await expect(page.locator("#accountRole")).toHaveText("Connected wallet");
-  await expect(page.getByText("This page only unlocks for the current owner or pending owner address.")).toBeVisible();
-  await expect(page.locator("#adminShell")).toBeHidden();
+  await expect(page.locator("#accountRole")).toHaveText("Read-only viewer");
+  await expect(page.getByText("Public contract and airdrop round information is available below. Owner actions remain locked.")).toBeVisible();
+  await expect(page.locator("#adminShell")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Rounds", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accounts", exact: true })).toBeHidden();
+  await expect(page.locator("#refreshRoundClaimsStatusButton")).toBeDisabled();
   await expect(page.locator("#pendingOwnerShell")).toBeHidden();
   await expect(page.locator("#ownershipShell")).toBeHidden();
 });
@@ -18,7 +21,7 @@ test("wrong-network owner is gated until switching back to the configured networ
   await connectViaWalletPicker(page);
   await expect(page.locator("#accountRole")).toHaveText("Owner connected");
 
-  await mockWallet.setChainId(page, toHexChainId(31337));
+  await mockWallet.setChainId(page, toHexChainId(1337));
   await page.reload();
   await expect(page.locator("#accountRole")).toHaveText("Wrong network");
   await expect(page.getByText("Switch the connected wallet to the configured network to manage the airdrop.")).toBeVisible();

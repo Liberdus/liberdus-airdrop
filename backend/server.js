@@ -26,6 +26,7 @@ const REQUEST_TOKEN_URL = "https://api.x.com/oauth/request_token";
 const AUTHORIZE_URL = "https://api.x.com/oauth/authorize";
 const ACCESS_TOKEN_URL = "https://api.x.com/oauth/access_token";
 const VERIFY_CREDENTIALS_URL = "https://api.x.com/1.1/account/verify_credentials.json";
+const FRIENDSHIP_LOOKUP_URL = "https://api.x.com/1.1/friendships/show.json";
 const AUTH_COMPLETE_QUERY_PARAM = "x_auth";
 const AUTH_COMPLETE_QUERY_VALUE = "complete";
 const AUTH_ERROR_QUERY_PARAM = "x_error";
@@ -577,6 +578,43 @@ async function verifyCredentials(accessToken, accessTokenSecret) {
   }
 }
 
+async function checkAuthenticatedUserFollowsLiberdus(accessToken, accessTokenSecret, profile) {
+  const targetUsername = String(process.env.LIBERDUS_X_USERNAME || "Liberdus").trim().replace(/^@+/u, "");
+  const requestParams = new Map([
+    ["source_id", String(profile.id || "").trim()],
+    ["target_screen_name", targetUsername],
+  ]);
+  const oauthParams = buildOAuthParams({ oauth_token: accessToken });
+  oauthParams.set("oauth_signature", buildSignature({
+    method: "GET",
+    url: FRIENDSHIP_LOOKUP_URL,
+    params: new Map([...oauthParams.entries(), ...requestParams.entries()]),
+    consumerSecret: getApiSecret(),
+    tokenSecret: accessTokenSecret,
+  }));
+
+  const url = new URL(FRIENDSHIP_LOOKUP_URL);
+  for (const [key, value] of requestParams) url.searchParams.set(key, value);
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: createOAuthHeader(oauthParams) },
+    });
+    const text = await parseTextResponse(response);
+    if (!response.ok) {
+      console.warn(`[X follower check] HTTP ${response.status}; candidate remains pending.`);
+      return { status: "pending", checkedAt: null };
+    }
+    const payload = JSON.parse(text);
+    return {
+      status: payload?.relationship?.source?.following ? "confirmed" : "not_following",
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.warn(`[X follower check] ${error.message}; candidate remains pending.`);
+    return { status: "pending", checkedAt: null };
+  }
+}
+
 function pruneExpiredState() {
   const now = Date.now();
 
@@ -892,6 +930,7 @@ function serializeAccountForClient(account) {
     firstSeenFollowingAt: account.firstSeenFollowingAt || null,
     lastSeenFollowingAt: account.lastSeenFollowingAt || null,
     snapshotsSeenCount: Number(account.snapshotsSeenCount || 0),
+    campaignCandidate: account.campaignCandidate || null,
   };
 }
 
@@ -1243,6 +1282,12 @@ async function handleCallback(request, response) {
     }
 
     const profile = normalizeIdentityFromOAuth1(accessTokenResponse, verifiedCredentials);
+    const followerCheck = await checkAuthenticatedUserFollowsLiberdus(
+      accessTokenResponse.oauth_token,
+      accessTokenResponse.oauth_token_secret,
+      profile,
+    );
+    accountStore.verifyCampaignProfile(profile, followerCheck);
     const sessionId = createRandomToken(32);
     const csrfToken = createRandomToken(24);
     const authenticatedAt = new Date().toISOString();
@@ -1292,6 +1337,7 @@ async function handleSessionLookup(request, response) {
     expiresAt: session.expiresAtMs,
     csrfToken: session.csrfToken,
     account: serializeAccountForClient(account),
+    campaignCandidate: accountStore.getCampaignCandidateForProfile(session.profile),
     existingSubmission: serializeSubmissionForClient(existingSubmission),
   });
 }
@@ -1427,14 +1473,22 @@ async function handleAdminAccountsImport(request, response) {
     throw new HttpError(400, "Accounts import must include CSV content.");
   }
 
-  const result = accountStore.importCombinedAccountsCsv(csvContent, {
-    importedAt: String(body.importedAt || "").trim() || undefined,
-  });
+  let result;
+  try {
+    result = accountStore.importCombinedAccountsCsv(csvContent, {
+      importedAt: String(body.importedAt || "").trim() || undefined,
+    });
+  } catch (error) {
+    throw new HttpError(400, error.message || "Accounts CSV could not be imported.");
+  }
 
   writeJson(response, 200, {
     fileName: String(body.fileName || "").trim() || null,
     importedAt: result.importedAt,
     importedCount: result.importedCount,
+    sourceFormat: result.sourceFormat,
+    rejectedCount: result.rejectedCount,
+    rejected: result.rejected.slice(0, 100),
     summary: buildAdminSummary(),
   });
 }

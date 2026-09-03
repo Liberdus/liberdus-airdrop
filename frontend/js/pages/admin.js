@@ -1184,7 +1184,7 @@ function renderUploadedRound() {
   if (!round) {
     els.uploadedClaimCount.textContent = "-";
     els.uploadedClaimTotal.textContent = "-";
-    els.uploadPreviewBody.innerHTML = '<tr><td colspan="3" class="empty-row">Upload or build a claims JSON file to preview it.</td></tr>';
+    els.uploadPreviewBody.innerHTML = '<tr><td colspan="3" class="empty-row">Upload or build a claims JSON or CSV file to preview it.</td></tr>';
     els.clearUploadedButton.disabled = true;
     return;
   }
@@ -1206,7 +1206,67 @@ function renderUploadedRound() {
 
 async function loadUploadedClaimsFile(file) {
   const rawText = await file.text();
-  applyUploadedRound(buildClaimRound(rawText, runtime.tokenDecimals));
+  const isCsv = file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv";
+  applyUploadedRound(buildClaimRound(isCsv ? parseClaimsCsv(rawText) : rawText, runtime.tokenDecimals));
+}
+
+function parseClaimsCsv(rawText) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  const text = String(rawText || "").replace(/^\uFEFF/u, "");
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (character === '"' && text[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else if (character === '"') {
+        quoted = false;
+      } else {
+        field += character;
+      }
+    } else if (character === '"') {
+      quoted = true;
+    } else if (character === ",") {
+      row.push(field.trim());
+      field = "";
+    } else if (character === "\n") {
+      row.push(field.replace(/\r$/u, "").trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += character;
+    }
+  }
+  row.push(field.replace(/\r$/u, "").trim());
+  if (row.some(Boolean)) rows.push(row);
+  if (quoted) throw new Error("Claims CSV contains an unclosed quoted field.");
+  if (rows.length < 2) throw new Error("Claims CSV must include a header and at least one claim row.");
+
+  const headers = rows[0].map((value) => value.toLowerCase().replace(/[\s_-]+/gu, ""));
+  const findColumn = (...names) => names.map((name) => headers.indexOf(name)).find((index) => index >= 0) ?? -1;
+  const accountColumn = findColumn("account", "wallet", "walletaddress", "address");
+  const amountColumn = findColumn("amount");
+  const amountRawColumn = findColumn("amountraw");
+  const indexColumn = findColumn("index");
+  const campaignWalletColumn = headers.indexOf("whatisyourbinancesmartchainaddress?");
+
+  if (campaignWalletColumn >= 0) {
+    throw new Error("This is a social rewards campaign CSV. Upload it from the Accounts tab; it is not a claims file and does not contain reward amounts.");
+  }
+  if (accountColumn < 0 || (amountColumn < 0 && amountRawColumn < 0)) {
+    throw new Error("Claims CSV must include account (or wallet) and amount (or amountRaw) columns.");
+  }
+
+  return rows.slice(1).map((values, rowIndex) => ({
+    index: indexColumn >= 0 && values[indexColumn] !== "" ? values[indexColumn] : rowIndex,
+    account: values[accountColumn],
+    amount: amountColumn >= 0 ? values[amountColumn] : undefined,
+    amountRaw: amountRawColumn >= 0 ? values[amountRawColumn] : undefined,
+  }));
 }
 
 async function refreshStoredRounds() {
@@ -1480,7 +1540,7 @@ function renderAccountsTable() {
   renderAccountsPagination();
 
   if (!runtime.accountsRows.length) {
-    els.accountsTableBody.innerHTML = '<tr><td colspan="8" class="empty-row">No matching accounts were found.</td></tr>';
+    els.accountsTableBody.innerHTML = '<tr><td colspan="9" class="empty-row">No matching accounts were found.</td></tr>';
     return;
   }
 
@@ -1492,6 +1552,9 @@ function renderAccountsTable() {
         <td>${renderExplorerAddress(account.walletAddress)}</td>
         <td>${escapeHtml(account.walletSource || "-")}</td>
         <td>${createFlagBadge(account.isFollower)}</td>
+        <td>${escapeHtml(account.campaignCandidate
+          ? `${account.campaignCandidate.xVerificationStatus} / ${account.campaignCandidate.followerStatus}`
+          : "-")}</td>
         <td>${createFlagBadge(account.needsRecovery, { positiveLabel: "Needs action", negativeLabel: "Clear" })}</td>
         <td>
           <div class="management-meta-stack">
@@ -1797,6 +1860,32 @@ function setAdminTab(tabId) {
   }
 }
 
+function applyWorkspacePermissions() {
+  const ownerMode = isOwner();
+  const ownerOnlyTabs = new Set(["prepare", "contract", "accounts"]);
+
+  els.adminTabButtons.forEach((button) => {
+    const tabId = button.getAttribute("data-admin-tab");
+    button.hidden = !ownerMode && ownerOnlyTabs.has(tabId);
+  });
+
+  if (!ownerMode && ownerOnlyTabs.has(runtime.activeAdminTab)) {
+    runtime.activeAdminTab = "rounds";
+    syncAdminTabs();
+  }
+
+  els.adminShell.querySelectorAll("input, select, textarea, button").forEach((control) => {
+    const isViewerControl = control === els.refreshButton || control.hasAttribute("data-admin-tab");
+    if (!ownerMode && !isViewerControl && !control.disabled) {
+      control.disabled = true;
+      control.dataset.readonlyDisabled = "true";
+    } else if (ownerMode && control.dataset.readonlyDisabled === "true") {
+      control.disabled = false;
+      delete control.dataset.readonlyDisabled;
+    }
+  });
+}
+
 function applyOwnerGate() {
   els.ownerAddress.textContent = runtime.owner || "-";
   els.connectedAccount.textContent = runtime.config.airdropAddress || "No contract configured";
@@ -1813,11 +1902,12 @@ function applyOwnerGate() {
 
   if (!runtime.account) {
       resetAdminAccess();
-      els.accountRole.textContent = "Disconnected";
-      els.adminGateMessage.textContent = "Connect the owner or pending owner wallet to view admin controls.";
+      els.accountRole.textContent = "Read-only viewer";
+      els.adminGateMessage.textContent = "Public contract and airdrop round information is available below. Connect the owner wallet to unlock management controls.";
       els.switchNetworkGateButton.hidden = true;
-      els.adminShell.hidden = true;
+      els.adminShell.hidden = false;
       els.pendingOwnerShell.hidden = true;
+      applyWorkspacePermissions();
       return;
   }
 
@@ -1843,11 +1933,12 @@ function applyOwnerGate() {
 
   if (!hasOwnershipAccess()) {
       resetAdminAccess();
-      els.accountRole.textContent = "Connected wallet";
-      els.adminGateMessage.textContent = "This page only unlocks for the current owner or pending owner address.";
+      els.accountRole.textContent = "Read-only viewer";
+      els.adminGateMessage.textContent = "Public contract and airdrop round information is available below. Owner actions remain locked.";
       els.switchNetworkGateButton.hidden = true;
-      els.adminShell.hidden = true;
+      els.adminShell.hidden = false;
       els.pendingOwnerShell.hidden = true;
+      applyWorkspacePermissions();
       return;
   }
 
@@ -1862,6 +1953,7 @@ function applyOwnerGate() {
   els.switchNetworkGateButton.hidden = true;
   els.adminShell.hidden = !isOwner();
   els.pendingOwnerShell.hidden = !isPendingOwner();
+  applyWorkspacePermissions();
   updateStartAirdropButtonState();
 }
 
@@ -2668,7 +2760,7 @@ function bindEvents() {
       }
 
       const content = await file.text();
-      await callAdminApi((accessToken) => importAdminAccounts(runtime.config, accessToken, {
+      const result = await callAdminApi((accessToken) => importAdminAccounts(runtime.config, accessToken, {
         fileName: file.name,
         content,
       }));
@@ -2676,7 +2768,13 @@ function bindEvents() {
       els.accountsImportFileInput.value = "";
       runtime.accountsPagination.page = 1;
       await loadAccountsPage(1);
-      logger.log(`Accounts imported from ${file.name}.`, "success");
+      const formatLabel = result.sourceFormat === "social-rewards-campaign"
+        ? "social rewards candidates"
+        : "accounts";
+      const rejectionLabel = result.rejectedCount
+        ? ` ${result.rejectedCount} row(s) were rejected; correct them and re-upload if needed.`
+        : "";
+      logger.log(`${result.importedCount} ${formatLabel} imported from ${file.name}.${rejectionLabel}`, result.rejectedCount ? "warn" : "success");
     } catch (error) {
       reportError(error, "Import accounts");
     }

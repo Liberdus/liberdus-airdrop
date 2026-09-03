@@ -187,6 +187,12 @@ npm run recovery-candidates:import -- --file "C:\path\to\api_followers_not_seen_
 
 That command reads `X_RECOVERY_CANDIDATES_FILE` by default, supports both the processed CSV format and the legacy JSON username list, and marks the latest recovery-candidate set on `x_accounts` in `LIBERDUS_DB_PATH`.
 
+### Social rewards candidate CSV
+
+The admin Accounts upload accepts either the compact accounts template or the filtered Google Form export from the Liberdus Social Rewards campaign. Campaign rows must contain the original X-profile and BSC-wallet headers. If the Discord status column is present, only `CONFIRMED_MEMBER` rows are accepted. Invalid and duplicate rows are reported instead of silently imported, and an incompatible or zero-candidate CSV is rejected without clearing existing follower flags.
+
+Campaign imports are stored as prevalidated candidates. They do not mark anyone as an X follower. When a candidate signs in with X, the backend matches the submitted username, records the immutable X user ID, and attempts a live relationship check against `LIBERDUS_X_USERNAME` (default `Liberdus`). The result is stored as `confirmed`, `not_following`, or `pending` when X cannot provide the relationship check. Configure the existing X OAuth variables for this step; no OAuth tokens are stored.
+
 If you want to pull old JSON submissions into SQLite once, run:
 
 ```bash
