@@ -42,6 +42,7 @@ export const AIRDROP_ABI = [
   "function claim(uint256,uint256,address,uint256,bytes32[])",
   "function withdraw(address,uint256)",
   "function recoverERC20(address,address,uint256)",
+  "event Claimed(uint256 indexed epoch,uint256 indexed index,address indexed account,uint256 amount)",
 ];
 
 export const AIRDROP_ERROR_ABI = [
