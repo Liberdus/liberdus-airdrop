@@ -21,6 +21,7 @@ test("@smoke admin claims builder can save and deploy a matching airdrop draft",
   await connectViaWalletPicker(page);
 
   await expect(page.getByText("Owner wallet detected. Admin controls are unlocked.")).toBeVisible();
+  await page.getByRole("button", { name: "Prepare", exact: true }).click();
 
   await page.locator('[data-builder-field="account"]').fill(mockWallet.accounts.claimant);
   await page.locator('[data-builder-field="amount"]').fill("125");
@@ -102,6 +103,8 @@ test("admin accepts a claims CSV as well as JSON", async ({ page, mockWallet }, 
 
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
+  await expect(page.locator("#accountRole")).toHaveText("Owner connected");
+  await page.getByRole("button", { name: "Prepare", exact: true }).click();
   await page.locator("#uploadClaimsFileInput").setInputFiles(claimsCsvPath);
   await expect(page.locator("#uploadedClaimCount")).toHaveText("2 wallets");
   await expect(page.locator("#uploadedClaimTotal")).toContainText("20 LIB");
@@ -110,6 +113,8 @@ test("admin accepts a claims CSV as well as JSON", async ({ page, mockWallet }, 
 test("admin can edit a saved draft deadline before deploying it", async ({ page, e2eClaimsFile }) => {
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
+  await expect(page.locator("#accountRole")).toHaveText("Owner connected");
+  await page.getByRole("button", { name: "Prepare", exact: true }).click();
 
   await page.locator("#uploadClaimsFileInput").setInputFiles(e2eClaimsFile);
   await setFutureDeadline(page, "#startDeadlineInput", 90);

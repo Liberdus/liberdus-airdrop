@@ -66,6 +66,8 @@ async function getUtcDateTimeInputValue(page, unixTimestamp) {
 }
 
 async function startAirdropFromUpload(page, claimsFile, { deadlineSelector = "#startDeadlineInput" } = {}) {
+  await expect(page.locator("#accountRole")).toHaveText("Owner connected");
+  await page.getByRole("button", { name: "Prepare", exact: true }).click();
   const currentEpochText = (await page.locator("#currentEpoch").textContent())?.trim() || "0";
   const currentEpoch = Number.parseInt(currentEpochText, 10) || 0;
 
