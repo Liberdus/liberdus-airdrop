@@ -598,19 +598,23 @@ async function checkAuthenticatedUserFollowsLiberdus(accessToken, accessTokenSec
   try {
     const response = await fetch(url, {
       headers: { Authorization: createOAuthHeader(oauthParams) },
+      signal: AbortSignal.timeout(5000),
     });
     const text = await parseTextResponse(response);
     if (!response.ok) {
-      console.warn(`[X follower check] HTTP ${response.status}; candidate remains pending.`);
+      console.warn(`[X follower check] HTTP ${response.status}; preserving previous follower evidence.`);
       return { status: "pending", checkedAt: null };
     }
     const payload = JSON.parse(text);
+    if (typeof payload?.relationship?.source?.following !== "boolean") {
+      throw new Error("X follower check returned no following status.");
+    }
     return {
       status: payload?.relationship?.source?.following ? "confirmed" : "not_following",
       checkedAt: new Date().toISOString(),
     };
   } catch (error) {
-    console.warn(`[X follower check] ${error.message}; candidate remains pending.`);
+    console.warn(`[X follower check] ${error.message}; preserving previous follower evidence.`);
     return { status: "pending", checkedAt: null };
   }
 }
@@ -1282,12 +1286,14 @@ async function handleCallback(request, response) {
     }
 
     const profile = normalizeIdentityFromOAuth1(accessTokenResponse, verifiedCredentials);
-    const followerCheck = await checkAuthenticatedUserFollowsLiberdus(
-      accessTokenResponse.oauth_token,
-      accessTokenResponse.oauth_token_secret,
-      profile,
-    );
-    accountStore.verifyCampaignProfile(profile, followerCheck);
+    if (accountStore.isCampaignCandidate(profile)) {
+      const followerCheck = await checkAuthenticatedUserFollowsLiberdus(
+        accessTokenResponse.oauth_token,
+        accessTokenResponse.oauth_token_secret,
+        profile,
+      );
+      accountStore.verifyCampaignProfile(profile, followerCheck);
+    }
     const sessionId = createRandomToken(32);
     const csrfToken = createRandomToken(24);
     const authenticatedAt = new Date().toISOString();

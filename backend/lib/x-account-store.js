@@ -86,8 +86,8 @@ function normalizeCampaignAccountsCsv(rows, headers, importedAt) {
     dedupedAccounts.set(usernameDisplay, {
       xUserId: "",
       usernameDisplay,
-      isFollower: false,
-      needsRecovery: false,
+      isFollower: undefined,
+      needsRecovery: undefined,
       walletAddress,
       walletSource: "form",
       updatedAt: importedAt,
@@ -862,16 +862,23 @@ function createAccountStore(db) {
       };
     },
 
+    isCampaignCandidate(profile = {}) {
+      const account = this.getAccountByProfile(profile);
+      return Boolean(account && statements.getCampaignCandidateByAccountId.get(account.id));
+    },
+
     verifyCampaignProfile(profile = {}, followerCheck = {}, verifiedAt = new Date().toISOString()) {
       const account = this.getAccountByProfile(profile);
       if (!account) return null;
       const candidate = statements.getCampaignCandidateByAccountId.get(account.id);
       if (!candidate) return null;
 
+      const resolved = ["confirmed", "not_following"].includes(followerCheck.status);
+      const followerStatus = resolved ? followerCheck.status : candidate.follower_status;
       const savedAccount = saveAccount({
         xUserId: String(profile.id || "").trim(),
         usernameDisplay: String(profile.username || "").trim(),
-        isFollower: followerCheck.status === "confirmed",
+        isFollower: resolved ? followerCheck.status === "confirmed" : undefined,
         snapshotCapturedAt: followerCheck.status === "confirmed" ? verifiedAt : undefined,
         updatedAt: verifiedAt,
       });
@@ -879,13 +886,13 @@ function createAccountStore(db) {
         accountId: savedAccount.id,
         xUserId: String(profile.id || "").trim(),
         usernameDisplay: String(profile.username || "").trim(),
-        followerStatus: String(followerCheck.status || "pending"),
-        followerCheckedAt: followerCheck.checkedAt || null,
+        followerStatus,
+        followerCheckedAt: resolved ? (followerCheck.checkedAt || verifiedAt) : candidate.follower_checked_at,
         verifiedAt,
       });
       return {
         account: savedAccount,
-        followerStatus: String(followerCheck.status || "pending"),
+        followerStatus,
       };
     },
 
