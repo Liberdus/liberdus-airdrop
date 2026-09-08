@@ -1472,7 +1472,7 @@ function renderSelectedRoundClaims() {
     runtime.tokenDecimals,
     runtime.tokenSymbol,
   );
-  els.refreshRoundClaimsStatusButton.disabled = !(selectedRound.status === "deployed" && claimCount > 0);
+  els.refreshRoundClaimsStatusButton.disabled = !(isOwner() && selectedRound.status === "deployed" && claimCount > 0);
 
   if (!claimCount) {
     els.roundClaimsBody.innerHTML = '<tr><td colspan="5" class="empty-row">No claims were found for this round.</td></tr>';
