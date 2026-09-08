@@ -1,4 +1,5 @@
 const { expect, test, toHexChainId } = require("../../fixtures/testWithMockWallet");
+const { writeClaimsFixtureFile } = require("../../helpers/generatedClaimsFile");
 const { connectViaWalletPicker, startAirdropFromUpload } = require("../helpers");
 
 test("non-owner wallet can view public admin status while controls stay locked", async ({ page, mockWallet }) => {
@@ -16,12 +17,17 @@ test("non-owner wallet can view public admin status while controls stay locked",
   await expect(page.locator("#ownershipShell")).toBeHidden();
 });
 
-test("non-owner can see public claimed amount and claimed-user count", async ({ page, e2eClaimsFile, mockWallet }) => {
+test("non-owner can see public claim progress and per-user amount", async ({ page, mockWallet }, testInfo) => {
+  const uniformClaimsFile = writeClaimsFixtureFile(testInfo, "uniform-claims.json", [
+    { index: 0, account: mockWallet.accounts.claimant, amount: "100" },
+    { index: 1, account: mockWallet.accounts.secondary, amount: "100" },
+  ]);
+
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
   await expect(page.locator("#accountRole")).toHaveText("Owner connected");
   await page.getByRole("button", { name: "Prepare", exact: true }).click();
-  await startAirdropFromUpload(page, e2eClaimsFile);
+  await startAirdropFromUpload(page, uniformClaimsFile);
 
   await mockWallet.setAccount(page, mockWallet.accounts.claimant);
   await page.goto("index.html");
@@ -33,11 +39,12 @@ test("non-owner can see public claimed amount and claimed-user count", async ({ 
 
   await expect(page.locator("#accountRole")).toHaveText("Read-only viewer");
   await expect(page.getByRole("columnheader", { name: "Claimed Amount" })).toBeVisible();
-  await expect(page.getByRole("columnheader", { name: "Users Claimed" })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Claim Per User" })).toBeVisible();
 
   const deployedRound = page.locator("#epochListBody tr", { hasText: "DB + Chain" });
-  await expect(deployedRound.locator("td").nth(4)).toHaveText("125 LIB / 215 LIB");
-  await expect(deployedRound.locator("td").nth(5)).toHaveText("1 / 2");
+  await expect(deployedRound.locator("td").nth(4).locator("strong")).toHaveText("100 / 200 LIB");
+  await expect(deployedRound.locator("td").nth(4).locator("span")).toHaveText("1 / 2 users");
+  await expect(deployedRound.locator("td").nth(5)).toHaveText("100 LIB");
 
   const merkleRoot = deployedRound.locator("td").nth(1).locator("code");
   await expect(merkleRoot).toHaveText(/^0x[0-9a-f]{4}\.\.\.[0-9a-f]{4}$/i);
