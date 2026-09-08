@@ -14,6 +14,8 @@ function writeFixtureFile(testInfo, name, content) {
 test("admin can upload an existing claims file and gets a duplicate-root warning on re-upload", async ({ page, e2eClaimsFile }) => {
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
+  await expect(page.locator("#accountRole")).toHaveText("Owner connected");
+  await page.getByRole("button", { name: "Prepare", exact: true }).click();
 
   await page.locator("#uploadClaimsFileInput").setInputFiles(e2eClaimsFile);
   await expect(page.getByText("Claims file loaded.")).toBeVisible();
@@ -56,6 +58,8 @@ test("admin can save a large uploaded round to the backend", async ({ page }, te
 
   await page.goto("admin.html");
   await connectViaWalletPicker(page);
+  await expect(page.locator("#accountRole")).toHaveText("Owner connected");
+  await page.getByRole("button", { name: "Prepare", exact: true }).click();
 
   await page.locator("#uploadClaimsFileInput").setInputFiles(claimsFile);
   await expect(page.getByText("Claims file loaded.")).toBeVisible();

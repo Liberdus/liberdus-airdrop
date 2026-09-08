@@ -41,6 +41,74 @@ function parseCsvText(csvText) {
   });
 }
 
+const CAMPAIGN_HEADERS = {
+  xProfile: "Follow @Liberdus on X, then please provided the link to your X profile page.",
+  wallet: "What is your Binance Smart Chain address?",
+  email: "Email Address",
+};
+
+function xUsernameFromProfile(value) {
+  const rawValue = String(value || "").trim();
+  const urlMatch = rawValue.match(/^(?:https?:\/\/)?(?:www\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})(?:[/?#].*)?$/iu);
+  const usernameMatch = rawValue.match(/^@?([A-Za-z0-9_]{1,15})$/u);
+  return normalizeUsername(urlMatch?.[1] || usernameMatch?.[1] || "");
+}
+
+function normalizeCampaignAccountsCsv(rows, headers, importedAt) {
+  const missingHeaders = [CAMPAIGN_HEADERS.xProfile, CAMPAIGN_HEADERS.wallet]
+    .filter((header) => !headers.includes(header));
+  if (missingHeaders.length) {
+    throw new Error(`Campaign CSV is missing required column(s): ${missingHeaders.join(", ")}`);
+  }
+
+  const rejected = [];
+  const dedupedAccounts = new Map();
+  for (const [index, row] of rows.entries()) {
+    const usernameDisplay = xUsernameFromProfile(row[CAMPAIGN_HEADERS.xProfile]);
+    const walletAddress = String(row[CAMPAIGN_HEADERS.wallet] || "").trim();
+    const discordStatus = String(row["Discord Community Status"] || "").trim();
+    const reasons = [];
+    if (!usernameDisplay) reasons.push("invalid X profile");
+    if (!/^0x[a-fA-F0-9]{40}$/u.test(walletAddress)) reasons.push("invalid wallet address");
+    if (headers.includes("Discord Community Status") && discordStatus !== "CONFIRMED_MEMBER") {
+      reasons.push("Discord membership is not confirmed");
+    }
+    if (reasons.length) {
+      rejected.push({ rowNumber: index + 2, reasons });
+      continue;
+    }
+
+    if (dedupedAccounts.has(usernameDisplay)) {
+      rejected.push({ rowNumber: index + 2, reasons: ["duplicate X username"] });
+      continue;
+    }
+
+    dedupedAccounts.set(usernameDisplay, {
+      xUserId: "",
+      usernameDisplay,
+      isFollower: undefined,
+      needsRecovery: undefined,
+      walletAddress,
+      walletSource: "form",
+      updatedAt: importedAt,
+      campaignCandidate: {
+        submittedXUsername: usernameDisplay,
+        submittedWalletAddress: walletAddress,
+        submittedEmail: String(row[CAMPAIGN_HEADERS.email] || "").trim(),
+        submissionJson: JSON.stringify(row),
+        complianceStatus: "prevalidated",
+        importedAt,
+      },
+    });
+  }
+
+  if (!dedupedAccounts.size) {
+    throw new Error("Campaign CSV contained no importable candidates.");
+  }
+
+  return { accounts: [...dedupedAccounts.values()], rejected };
+}
+
 function parseSnapshotHistory(rawValue) {
   try {
     const parsed = JSON.parse(rawValue || "[]");
@@ -253,6 +321,25 @@ function normalizeRecoveryCandidates(filePath, options = {}) {
 function normalizeCombinedAccountsCsv(csvText, options = {}) {
   const importedAt = normalizeIsoDate(options.importedAt, new Date().toISOString());
   const rows = parseCsvText(csvText);
+  const headers = rows.length ? Object.keys(rows[0]) : [];
+  const isCampaignCsv = headers.includes(CAMPAIGN_HEADERS.xProfile) || headers.includes(CAMPAIGN_HEADERS.wallet);
+
+  if (isCampaignCsv) {
+    const campaignImport = normalizeCampaignAccountsCsv(rows, headers, importedAt);
+    return {
+      importedAt,
+      sourceFormat: "social-rewards-campaign",
+      rejected: campaignImport.rejected,
+      accounts: campaignImport.accounts,
+    };
+  }
+
+  const hasAccountIdentityHeader = headers.some((header) => [
+    "x_user_id", "user_id", "x_username", "username", "api_username",
+  ].includes(header));
+  if (!hasAccountIdentityHeader) {
+    throw new Error("Accounts CSV must include an X username or X user ID column.");
+  }
   const dedupedAccounts = new Map();
 
   for (const row of rows) {
@@ -288,6 +375,8 @@ function normalizeCombinedAccountsCsv(csvText, options = {}) {
 
   return {
     importedAt,
+    sourceFormat: "combined-accounts",
+    rejected: [],
     accounts: [...dedupedAccounts.values()],
   };
 }
@@ -427,6 +516,38 @@ function createAccountStore(db) {
         MAX(latest_snapshot_captured_at) AS latestSnapshotCapturedAt
       FROM x_accounts
     `),
+    upsertCampaignCandidate: db.prepare(`
+      INSERT INTO social_reward_candidates (
+        account_id, submitted_x_username, submitted_wallet_address,
+        submitted_email, submission_json, compliance_status,
+        x_verification_status, follower_status, imported_at, updated_at
+      ) VALUES (
+        @accountId, @submittedXUsername, @submittedWalletAddress,
+        @submittedEmail, @submissionJson, @complianceStatus,
+        'pending', 'pending', @importedAt, @updatedAt
+      )
+      ON CONFLICT(submitted_x_username) DO UPDATE SET
+        account_id = excluded.account_id,
+        submitted_wallet_address = excluded.submitted_wallet_address,
+        submitted_email = excluded.submitted_email,
+        submission_json = excluded.submission_json,
+        compliance_status = excluded.compliance_status,
+        updated_at = excluded.updated_at
+    `),
+    getCampaignCandidateByAccountId: db.prepare(`
+      SELECT * FROM social_reward_candidates WHERE account_id = ?
+    `),
+    verifyCampaignCandidate: db.prepare(`
+      UPDATE social_reward_candidates
+      SET authenticated_x_user_id = @xUserId,
+          authenticated_x_username = @usernameDisplay,
+          x_verification_status = 'verified',
+          follower_status = @followerStatus,
+          x_verified_at = @verifiedAt,
+          follower_checked_at = @followerCheckedAt,
+          updated_at = @verifiedAt
+      WHERE account_id = @accountId
+    `),
   };
 
   function toAccountRecord(row) {
@@ -447,6 +568,13 @@ function createAccountStore(db) {
       snapshotHistory: parseSnapshotHistory(row.snapshot_history_json),
       createdAt: normalizeIsoDate(row.created_at),
       updatedAt: normalizeIsoDate(row.updated_at),
+      campaignCandidate: row.campaign_x_verification_status == null ? null : {
+        complianceStatus: String(row.campaign_compliance_status || ""),
+        xVerificationStatus: String(row.campaign_x_verification_status || "pending"),
+        followerStatus: String(row.campaign_follower_status || "pending"),
+        xVerifiedAt: normalizeIsoDate(row.campaign_x_verified_at),
+        followerCheckedAt: normalizeIsoDate(row.campaign_follower_checked_at),
+      },
     };
   }
 
@@ -572,7 +700,16 @@ function createAccountStore(db) {
     }
 
     if (normalized.walletOnly) {
-      filters.push(`TRIM(COALESCE(wallet_address, '')) <> ''`);
+      filters.push(`TRIM(COALESCE(x_accounts.wallet_address, '')) <> ''`);
+      filters.push(`
+        (
+          social_reward_candidates.id IS NULL
+          OR (
+            social_reward_candidates.x_verification_status = 'verified'
+            AND social_reward_candidates.follower_status = 'confirmed'
+          )
+        )
+      `);
     }
 
     return {
@@ -635,12 +772,14 @@ function createAccountStore(db) {
 
   const importCombinedAccounts = db.transaction((accountImport) => {
     const updatedAt = accountImport.importedAt;
-    statements.clearFollowerFlags.run({ updatedAt });
-    statements.clearRecoveryFlags.run({ updatedAt });
+    if (accountImport.sourceFormat !== "social-rewards-campaign") {
+      statements.clearFollowerFlags.run({ updatedAt });
+      statements.clearRecoveryFlags.run({ updatedAt });
+    }
 
     let importedCount = 0;
     for (const account of accountImport.accounts) {
-      saveAccount({
+      const savedAccount = saveAccount({
         xUserId: account.xUserId,
         usernameDisplay: account.usernameDisplay,
         xAccountCreatedAt: account.xAccountCreatedAt,
@@ -655,12 +794,22 @@ function createAccountStore(db) {
         latestSnapshotCapturedAt: account.latestSnapshotCapturedAt,
         updatedAt,
       });
+      if (account.campaignCandidate) {
+        statements.upsertCampaignCandidate.run({
+          accountId: savedAccount.id,
+          ...account.campaignCandidate,
+          updatedAt,
+        });
+      }
       importedCount += 1;
     }
 
     return {
       importedCount,
       importedAt: accountImport.importedAt,
+      sourceFormat: accountImport.sourceFormat,
+      rejectedCount: accountImport.rejected?.length || 0,
+      rejected: accountImport.rejected || [],
     };
   });
 
@@ -713,6 +862,40 @@ function createAccountStore(db) {
       };
     },
 
+    isCampaignCandidate(profile = {}) {
+      const account = this.getAccountByProfile(profile);
+      return Boolean(account && statements.getCampaignCandidateByAccountId.get(account.id));
+    },
+
+    verifyCampaignProfile(profile = {}, followerCheck = {}, verifiedAt = new Date().toISOString()) {
+      const account = this.getAccountByProfile(profile);
+      if (!account) return null;
+      const candidate = statements.getCampaignCandidateByAccountId.get(account.id);
+      if (!candidate) return null;
+
+      const resolved = ["confirmed", "not_following"].includes(followerCheck.status);
+      const followerStatus = resolved ? followerCheck.status : candidate.follower_status;
+      const savedAccount = saveAccount({
+        xUserId: String(profile.id || "").trim(),
+        usernameDisplay: String(profile.username || "").trim(),
+        isFollower: resolved ? followerCheck.status === "confirmed" : undefined,
+        snapshotCapturedAt: followerCheck.status === "confirmed" ? verifiedAt : undefined,
+        updatedAt: verifiedAt,
+      });
+      statements.verifyCampaignCandidate.run({
+        accountId: savedAccount.id,
+        xUserId: String(profile.id || "").trim(),
+        usernameDisplay: String(profile.username || "").trim(),
+        followerStatus,
+        followerCheckedAt: resolved ? (followerCheck.checkedAt || verifiedAt) : candidate.follower_checked_at,
+        verifiedAt,
+      });
+      return {
+        account: savedAccount,
+        followerStatus,
+      };
+    },
+
     upsertAuthenticatedProfile(profile = {}, updatedAt = new Date().toISOString()) {
       return saveAccount({
         xUserId: String(profile.id || "").trim(),
@@ -745,6 +928,8 @@ function createAccountStore(db) {
       const totalRow = db.prepare(`
         SELECT COUNT(*) AS total
         FROM x_accounts
+        LEFT JOIN social_reward_candidates
+          ON social_reward_candidates.account_id = x_accounts.id
         ${searchState.whereClause}
       `).get(searchState.sqlParams) || {};
       const total = Number(totalRow.total || 0);
@@ -752,10 +937,17 @@ function createAccountStore(db) {
       const page = totalPages > 0 ? Math.min(searchState.page, totalPages) : 1;
       const offset = (page - 1) * searchState.pageSize;
       const rows = db.prepare(`
-        SELECT *
+        SELECT x_accounts.*,
+               social_reward_candidates.compliance_status AS campaign_compliance_status,
+               social_reward_candidates.x_verification_status AS campaign_x_verification_status,
+               social_reward_candidates.follower_status AS campaign_follower_status,
+               social_reward_candidates.x_verified_at AS campaign_x_verified_at,
+               social_reward_candidates.follower_checked_at AS campaign_follower_checked_at
         FROM x_accounts
+        LEFT JOIN social_reward_candidates
+          ON social_reward_candidates.account_id = x_accounts.id
         ${searchState.whereClause}
-        ORDER BY LOWER(username_display) ASC, id ASC
+        ORDER BY LOWER(username_display) ASC, x_accounts.id ASC
         LIMIT @limit OFFSET @offset
       `).all({
         ...searchState.sqlParams,
@@ -783,6 +975,20 @@ function createAccountStore(db) {
         followerCount: Number(row.followerCount || 0),
         recoveryCandidateCount: Number(row.recoveryCandidateCount || 0),
         latestSnapshotCapturedAt: normalizeIsoDate(row.latestSnapshotCapturedAt),
+      };
+    },
+
+    getCampaignCandidateForProfile(profile = {}) {
+      const account = this.getAccountByProfile(profile);
+      if (!account) return null;
+      const row = statements.getCampaignCandidateByAccountId.get(account.id);
+      if (!row) return null;
+      return {
+        complianceStatus: String(row.compliance_status || ""),
+        xVerificationStatus: String(row.x_verification_status || "pending"),
+        followerStatus: String(row.follower_status || "pending"),
+        xVerifiedAt: normalizeIsoDate(row.x_verified_at),
+        followerCheckedAt: normalizeIsoDate(row.follower_checked_at),
       };
     },
   };

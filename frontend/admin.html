@@ -220,20 +220,20 @@
 
               <div class="subsection-header">
                 <div>
-                  <h3>Upload Existing Claims JSON</h3>
-                  <p class="hint">Use this when the raw claims list was prepared outside the admin page.</p>
+                  <h3>Upload Existing Claims JSON or CSV</h3>
+                  <p class="hint">Claims CSV columns: <code>account,amount</code> (optional <code>index</code> or <code>amountRaw</code>). Campaign-response CSV files belong in the Accounts tab.</p>
                 </div>
               </div>
             </div>
 
             <form id="startAirdropForm" class="form-grid">
               <label class="full-width">
-                <span>Claims JSON</span>
-                <input id="uploadClaimsFileInput" type="file" accept=".json,application/json">
+                <span>Claims JSON or CSV</span>
+                <input id="uploadClaimsFileInput" type="file" accept=".json,.csv,application/json,text/csv">
               </label>
               <label class="full-width">
                 <span>Merkle Root</span>
-                <input id="startRootInput" type="text" placeholder="Upload or build a claims JSON file" readonly>
+                <input id="startRootInput" type="text" placeholder="Upload or build a claims file" readonly>
               </label>
               <p id="startRootWarning" class="form-warning full-width" hidden></p>
               <label>
@@ -264,7 +264,7 @@
                   </tr>
                 </thead>
                 <tbody id="uploadPreviewBody">
-                  <tr><td colspan="3" class="empty-row">Upload or build a claims JSON file to preview it.</td></tr>
+                  <tr><td colspan="3" class="empty-row">Upload or build a claims JSON or CSV file to preview it.</td></tr>
                 </tbody>
                 <tfoot>
                   <tr>
@@ -571,13 +571,14 @@
                     <th>Wallet</th>
                     <th>Source</th>
                     <th>Follower</th>
+                    <th>Campaign X</th>
                     <th>Recovery</th>
                     <th>Snapshots</th>
                     <th>Latest Activity</th>
                   </tr>
                 </thead>
                 <tbody id="accountsTableBody">
-                  <tr><td colspan="8" class="empty-row">Open this tab to load accounts.</td></tr>
+                  <tr><td colspan="9" class="empty-row">Open this tab to load accounts.</td></tr>
                 </tbody>
               </table>
             </div>

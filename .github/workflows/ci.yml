@@ -46,6 +46,9 @@ jobs:
       - name: Run Contract Tests
         run: npm test
 
+      - name: Run Backend Tests
+        run: npm run test:backend
+
   e2e-smoke:
     name: E2E Smoke
     if: github.event_name == 'push' || github.event.pull_request.draft == false
