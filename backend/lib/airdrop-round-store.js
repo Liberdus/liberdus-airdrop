@@ -20,6 +20,7 @@ function normalizeRoundRecord(row) {
     merkleRoot: String(row.merkle_root || "").trim(),
     deadline: Number(row.deadline || 0),
     claimCount: Number(row.claim_count || 0),
+    claimAmountRaw: row.claim_amount_raw == null ? null : String(row.claim_amount_raw),
     totalAmountRaw: String(row.total_amount_raw || "0"),
     decimals: Number(row.decimals || 18),
     chainId: Number(row.chain_id || 0),
@@ -222,14 +223,23 @@ function createAirdropRoundStore(db) {
       )
     `),
     listRounds: db.prepare(`
-      SELECT *
-      FROM airdrop_rounds
-      WHERE deployment_key = ?
+      SELECT
+        r.*,
+        (
+          SELECT CASE
+            WHEN COUNT(*) > 0 AND COUNT(DISTINCT c.amount_raw) = 1 THEN MIN(c.amount_raw)
+            ELSE NULL
+          END
+          FROM airdrop_claims c
+          WHERE c.round_id = r.id
+        ) AS claim_amount_raw
+      FROM airdrop_rounds r
+      WHERE r.deployment_key = ?
       ORDER BY
-        CASE WHEN status = 'draft' THEN 0 ELSE 1 END,
-        COALESCE(epoch, 0) DESC,
-        datetime(updated_at) DESC,
-        id DESC
+        CASE WHEN r.status = 'draft' THEN 0 ELSE 1 END,
+        COALESCE(r.epoch, 0) DESC,
+        datetime(r.updated_at) DESC,
+        r.id DESC
     `),
     listWalletRounds: db.prepare(`
       SELECT

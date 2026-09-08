@@ -1297,7 +1297,11 @@ async function refreshStoredRounds() {
 function formatClaimedDisplay(claimedAmount, totalAmountRaw) {
   const claimedText = formatTokenAmount(claimedAmount, runtime.tokenDecimals, runtime.tokenSymbol);
   if (totalAmountRaw == null) return claimedText;
-  return `${claimedText} / ${formatTokenAmount(totalAmountRaw, runtime.tokenDecimals, runtime.tokenSymbol)}`;
+  const tokenSuffix = ` ${runtime.tokenSymbol}`;
+  const claimedValue = claimedText.endsWith(tokenSuffix)
+    ? claimedText.slice(0, -tokenSuffix.length)
+    : claimedText;
+  return `${claimedValue} / ${formatTokenAmount(totalAmountRaw, runtime.tokenDecimals, runtime.tokenSymbol)}`;
 }
 
 function formatRoundClaimedAmountDisplay(row) {
@@ -1316,6 +1320,11 @@ function formatRoundClaimedUsersDisplay(row) {
   if (row.claimedUserCount == null) return "-";
   if (row.eligibleUserCount == null) return String(row.claimedUserCount);
   return `${row.claimedUserCount} / ${row.eligibleUserCount}`;
+}
+
+function formatRoundClaimPerUserDisplay(row) {
+  if (row.claimAmountRaw == null) return "-";
+  return formatTokenAmount(row.claimAmountRaw, runtime.tokenDecimals, runtime.tokenSymbol);
 }
 
 function doesStoredRoundMatchChainRow(storedRound, chainRow) {
@@ -1372,6 +1381,7 @@ function buildRoundRows() {
       claimedAmount: null,
       claimedUserCount: 0,
       eligibleUserCount: Number(round.claimCount || 0),
+      claimAmountRaw: round.claimAmountRaw == null ? null : BigInt(round.claimAmountRaw),
       totalAmountRaw: BigInt(round.totalAmountRaw),
       sourceText: "DB draft",
       canFundTotal: true,
@@ -1399,6 +1409,9 @@ function buildRoundRows() {
       claimedAmount: chainRow.claimedAmount,
       claimedUserCount: chainRow.claimedUserCount,
       eligibleUserCount: matchesStoredRound ? Number(storedRound.claimCount || 0) : null,
+      claimAmountRaw: matchesStoredRound && storedRound.claimAmountRaw != null
+        ? BigInt(storedRound.claimAmountRaw)
+        : null,
       totalAmountRaw: matchesStoredRound ? BigInt(storedRound.totalAmountRaw) : chainRow.totalAmountRaw,
       sourceText: matchesStoredRound ? "DB + Chain" : "Chain only",
       canFundTotal: matchesStoredRound,
@@ -1424,6 +1437,7 @@ function buildRoundRows() {
       claimedAmount: null,
       claimedUserCount: null,
       eligibleUserCount: Number(round.claimCount || 0),
+      claimAmountRaw: round.claimAmountRaw == null ? null : BigInt(round.claimAmountRaw),
       totalAmountRaw: BigInt(round.totalAmountRaw),
       sourceText: "DB only",
       canFundTotal: true,
@@ -1711,8 +1725,13 @@ function renderEpochList() {
             </div>
           </td>
           <td><span class="status-chip" data-tone="${status.tone}">${status.text}</span></td>
-          <td>${formatRoundClaimedAmountDisplay(row)}</td>
-          <td>${formatRoundClaimedUsersDisplay(row)}</td>
+          <td>
+            <div class="round-claim-stack">
+              <strong>${formatRoundClaimedAmountDisplay(row)}</strong>
+              <span>${formatRoundClaimedUsersDisplay(row)} users</span>
+            </div>
+          </td>
+          <td>${formatRoundClaimPerUserDisplay(row)}</td>
           <td>${escapeHtml(row.sourceText)}</td>
           <td class="round-action-cell">
             ${row.canDeploy ? `<button type="button" class="secondary table-action-button" data-round-deploy="${row.roundId}">Deploy</button>` : ""}

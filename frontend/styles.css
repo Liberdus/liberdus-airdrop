@@ -2029,6 +2029,17 @@ tfoot td {
   color: var(--muted);
 }
 
+.round-claim-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 135px;
+}
+
+.round-claim-stack span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
