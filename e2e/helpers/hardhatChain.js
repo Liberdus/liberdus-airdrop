@@ -175,10 +175,11 @@ async function startBackendServer() {
   return {
     url: E2E_BACKEND_ORIGIN,
     async stop() {
-      if (backendProcess.exitCode != null || backendProcess.killed) {
+      if (backendProcess.exitCode != null || backendProcess.signalCode != null) {
         return;
       }
 
+      const exited = new Promise((resolve) => backendProcess.once("exit", resolve));
       try {
         if (process.platform === "win32") {
           execSync(`taskkill /pid ${backendProcess.pid} /T /F`, { stdio: "ignore" });
@@ -187,7 +188,10 @@ async function startBackendServer() {
         }
       } catch {
         // Ignore cleanup failures for test worker shutdown.
+        return;
       }
+      // Release the listening port before another test starts its backend.
+      await exited;
     },
   };
 }
