@@ -386,7 +386,7 @@ const test = base.extend({
   hardhatChain: [async ({}, use) => {
     await resetLocalChain();
     resetE2eDatabaseFile();
-    const backendServer = await startBackendServer();
+    let backendServer = await startBackendServer();
     let baseSnapshotId = await createSnapshot(RPC_URL);
 
     try {
@@ -399,7 +399,10 @@ const test = base.extend({
             throw new Error(`Failed to revert Hardhat snapshot ${baseSnapshotId} before ${testTitle}.`);
           }
 
+          // Reset in-memory rate limits and auth state as well as persisted data.
+          await backendServer.stop();
           clearE2EAirdropData();
+          backendServer = await startBackendServer();
           baseSnapshotId = await createSnapshot(RPC_URL);
           return baseSnapshotId;
         },

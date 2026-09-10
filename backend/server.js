@@ -999,6 +999,7 @@ function serializeAirdropRoundSummary(round) {
     merkleRoot: String(round.merkleRoot || "").trim(),
     deadline: Number(round.deadline || 0),
     claimCount: Number(round.claimCount || 0),
+    claimAmountRaw: round.claimAmountRaw == null ? null : String(round.claimAmountRaw),
     totalAmountRaw: String(round.totalAmountRaw || "0"),
     decimals: Number(round.decimals || 18),
     chainId: Number(round.chainId || 0),

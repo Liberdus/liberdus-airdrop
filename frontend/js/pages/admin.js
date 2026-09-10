@@ -316,8 +316,8 @@ function updateToastOffset() {
 
 function formatHexShort(value) {
   if (!value || typeof value !== "string") return "-";
-  if (value.length <= 22) return value;
-  return `${value.slice(0, 10)}...${value.slice(-8)}`;
+  if (value.length <= 14) return value;
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
 function formatAdminDeadlineLocal(value) {
@@ -1297,19 +1297,34 @@ async function refreshStoredRounds() {
 function formatClaimedDisplay(claimedAmount, totalAmountRaw) {
   const claimedText = formatTokenAmount(claimedAmount, runtime.tokenDecimals, runtime.tokenSymbol);
   if (totalAmountRaw == null) return claimedText;
-  return `${claimedText} / ${formatTokenAmount(totalAmountRaw, runtime.tokenDecimals, runtime.tokenSymbol)}`;
+  const tokenSuffix = ` ${runtime.tokenSymbol}`;
+  const claimedValue = claimedText.endsWith(tokenSuffix)
+    ? claimedText.slice(0, -tokenSuffix.length)
+    : claimedText;
+  return `${claimedValue} / ${formatTokenAmount(totalAmountRaw, runtime.tokenDecimals, runtime.tokenSymbol)}`;
 }
 
-function formatRoundTotalDisplay(row) {
+function formatRoundClaimedAmountDisplay(row) {
   if (row.claimedAmount != null) {
     return formatClaimedDisplay(row.claimedAmount, row.totalAmountRaw);
   }
 
-  if (row.totalAmountRaw != null) {
-    return formatTokenAmount(row.totalAmountRaw, runtime.tokenDecimals, runtime.tokenSymbol);
+  if (row.rowType === "draft" && row.totalAmountRaw != null) {
+    return formatClaimedDisplay(0n, row.totalAmountRaw);
   }
 
   return "-";
+}
+
+function formatRoundClaimedUsersDisplay(row) {
+  if (row.claimedUserCount == null) return "-";
+  if (row.eligibleUserCount == null) return String(row.claimedUserCount);
+  return `${row.claimedUserCount} / ${row.eligibleUserCount}`;
+}
+
+function formatRoundClaimPerUserDisplay(row) {
+  if (row.claimAmountRaw == null) return "-";
+  return formatTokenAmount(row.claimAmountRaw, runtime.tokenDecimals, runtime.tokenSymbol);
 }
 
 function doesStoredRoundMatchChainRow(storedRound, chainRow) {
@@ -1364,6 +1379,9 @@ function buildRoundRows() {
       root: round.merkleRoot,
       deadline: Number(round.deadline || 0),
       claimedAmount: null,
+      claimedUserCount: 0,
+      eligibleUserCount: Number(round.claimCount || 0),
+      claimAmountRaw: round.claimAmountRaw == null ? null : BigInt(round.claimAmountRaw),
       totalAmountRaw: BigInt(round.totalAmountRaw),
       sourceText: "DB draft",
       canFundTotal: true,
@@ -1389,6 +1407,11 @@ function buildRoundRows() {
       root: chainRow.root,
       deadline: Number(chainRow.deadline || 0),
       claimedAmount: chainRow.claimedAmount,
+      claimedUserCount: chainRow.claimedUserCount,
+      eligibleUserCount: matchesStoredRound ? Number(storedRound.claimCount || 0) : null,
+      claimAmountRaw: matchesStoredRound && storedRound.claimAmountRaw != null
+        ? BigInt(storedRound.claimAmountRaw)
+        : null,
       totalAmountRaw: matchesStoredRound ? BigInt(storedRound.totalAmountRaw) : chainRow.totalAmountRaw,
       sourceText: matchesStoredRound ? "DB + Chain" : "Chain only",
       canFundTotal: matchesStoredRound,
@@ -1412,6 +1435,9 @@ function buildRoundRows() {
       root: round.merkleRoot,
       deadline: Number(round.deadline || 0),
       claimedAmount: null,
+      claimedUserCount: null,
+      eligibleUserCount: Number(round.claimCount || 0),
+      claimAmountRaw: round.claimAmountRaw == null ? null : BigInt(round.claimAmountRaw),
       totalAmountRaw: BigInt(round.totalAmountRaw),
       sourceText: "DB only",
       canFundTotal: true,
@@ -1681,7 +1707,7 @@ function renderEpochList() {
   runtime.roundRows = buildRoundRows();
 
   if (!runtime.roundRows.length) {
-    els.epochListBody.innerHTML = '<tr><td colspan="7" class="empty-row">No rounds found yet.</td></tr>';
+    els.epochListBody.innerHTML = '<tr><td colspan="8" class="empty-row">No rounds found yet.</td></tr>';
     return;
   }
 
@@ -1699,7 +1725,13 @@ function renderEpochList() {
             </div>
           </td>
           <td><span class="status-chip" data-tone="${status.tone}">${status.text}</span></td>
-          <td>${formatRoundTotalDisplay(row)}</td>
+          <td>
+            <div class="round-claim-stack">
+              <strong>${formatRoundClaimedAmountDisplay(row)}</strong>
+              <span>${formatRoundClaimedUsersDisplay(row)} users</span>
+            </div>
+          </td>
+          <td>${formatRoundClaimPerUserDisplay(row)}</td>
           <td>${escapeHtml(row.sourceText)}</td>
           <td class="round-action-cell">
             ${row.canDeploy ? `<button type="button" class="secondary table-action-button" data-round-deploy="${row.roundId}">Deploy</button>` : ""}
@@ -1824,12 +1856,26 @@ async function refreshEpochRows() {
       const totalAmountRaw = localRound && localRound.merkleRoot.toLowerCase() === root.toLowerCase()
         ? BigInt(localRound.totalAmountRaw)
         : null;
+      let claimedUserCount = null;
+
+      try {
+        const fromBlock = localRound?.startBlockNumber ?? 0;
+        const claimEvents = await airdrop.queryFilter(airdrop.filters.Claimed(BigInt(epoch)), fromBlock);
+        claimedUserCount = new Set(
+          claimEvents
+            .map((event) => normalizeAddress(event.args?.account))
+            .filter(Boolean),
+        ).size;
+      } catch {
+        claimedUserCount = null;
+      }
 
       return {
         epoch,
         root,
         deadline,
         claimedAmount,
+        claimedUserCount,
         totalAmountRaw,
       };
     }),
