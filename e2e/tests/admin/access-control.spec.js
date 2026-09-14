@@ -18,6 +18,18 @@ test("non-owner wallet can view public admin status while controls stay locked",
 });
 
 test("non-owner can see public claim progress and per-user amount", async ({ page, mockWallet }, testInfo) => {
+  await page.addInitScript(() => {
+    const provider = window.ethereum;
+    const request = provider.request.bind(provider);
+    window.claimLogRequests = 0;
+    provider.request = (payload) => {
+      if (payload.method === "eth_getLogs") {
+        window.claimLogRequests += 1;
+        throw new Error("Historical log requests are unavailable.");
+      }
+      return request(payload);
+    };
+  });
   const uniformClaimsFile = writeClaimsFixtureFile(testInfo, "uniform-claims.json", [
     { index: 0, account: mockWallet.accounts.claimant, amount: "100" },
     { index: 1, account: mockWallet.accounts.secondary, amount: "100" },
@@ -28,6 +40,11 @@ test("non-owner can see public claim progress and per-user amount", async ({ pag
   await expect(page.locator("#accountRole")).toHaveText("Owner connected");
   await page.getByRole("button", { name: "Prepare", exact: true }).click();
   await startAirdropFromUpload(page, uniformClaimsFile);
+  await page.reload();
+  await expect(page.locator("#accountRole")).toHaveText("Owner connected");
+  await page.getByRole("button", { name: "Rounds", exact: true }).click();
+  await expect(page.locator("#epochListBody")).toContainText("0 / 2 users");
+  expect(await page.evaluate(() => window.claimLogRequests)).toBe(0);
 
   await mockWallet.setAccount(page, mockWallet.accounts.claimant);
   await page.goto("index.html");
@@ -45,6 +62,7 @@ test("non-owner can see public claim progress and per-user amount", async ({ pag
   await expect(deployedRound.locator("td").nth(4).locator("strong")).toHaveText("100 / 200 LIB");
   await expect(deployedRound.locator("td").nth(4).locator("span")).toHaveText("1 / 2 users");
   await expect(deployedRound.locator("td").nth(5)).toHaveText("100 LIB");
+  expect(await page.evaluate(() => window.claimLogRequests)).toBe(0);
 
   const merkleRoot = deployedRound.locator("td").nth(1).locator("code");
   await expect(merkleRoot).toHaveText(/^0x[0-9a-f]{4}\.\.\.[0-9a-f]{4}$/i);

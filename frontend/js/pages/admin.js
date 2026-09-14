@@ -1856,18 +1856,27 @@ async function refreshEpochRows() {
       const totalAmountRaw = localRound && localRound.merkleRoot.toLowerCase() === root.toLowerCase()
         ? BigInt(localRound.totalAmountRaw)
         : null;
+      const claimAmountRaw = totalAmountRaw != null && localRound.claimAmountRaw != null
+        ? BigInt(localRound.claimAmountRaw)
+        : null;
       let claimedUserCount = null;
 
-      try {
-        const fromBlock = localRound?.startBlockNumber ?? 0;
-        const claimEvents = await airdrop.queryFilter(airdrop.filters.Claimed(BigInt(epoch)), fromBlock);
-        claimedUserCount = new Set(
-          claimEvents
-            .map((event) => normalizeAddress(event.args?.account))
-            .filter(Boolean),
-        ).size;
-      } catch {
-        claimedUserCount = null;
+      if (claimAmountRaw > 0n && claimedAmount % claimAmountRaw === 0n) {
+        // Stored rounds have one claim per wallet. Uniform allocations let us
+        // count claims exactly without fetching historical event logs.
+        claimedUserCount = (claimedAmount / claimAmountRaw).toString();
+      } else {
+        try {
+          const fromBlock = localRound?.startBlockNumber ?? 0;
+          const claimEvents = await airdrop.queryFilter(airdrop.filters.Claimed(BigInt(epoch)), fromBlock);
+          claimedUserCount = new Set(
+            claimEvents
+              .map((event) => normalizeAddress(event.args?.account))
+              .filter(Boolean),
+          ).size;
+        } catch {
+          claimedUserCount = null;
+        }
       }
 
       return {
